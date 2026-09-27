@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Heart } from "lucide-react";
+import { ChevronLeft, ChevronRight, Heart, Sparkles } from "lucide-react";
 import { apiFetch } from "@/lib/client";
-import { useCalendarChangedListener } from "@/lib/refresh";
+import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
 import { ChildcareBanner } from "@/components/ChildcareBanner";
+import { PlanWeekSheet } from "@/components/PlanWeekSheet";
 import type { CalendarDayView } from "@/lib/clientTypes";
 
 function todayStr(): string {
@@ -40,6 +41,7 @@ export default function WeekPage() {
   const [days, setDays] = useState<CalendarDayView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showPlan, setShowPlan] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -70,6 +72,22 @@ export default function WeekPage() {
           <ChevronRight size={22} />
         </button>
       </div>
+
+      <button
+        className="btn btn-secondary btn-block"
+        onClick={() => setShowPlan(true)}
+        style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+      >
+        <Sparkles size={17} /> Plan the week
+      </button>
+
+      {showPlan && (
+        <PlanWeekSheet
+          weekStart={weekStart}
+          onClose={() => setShowPlan(false)}
+          onApplied={() => emitCalendarChanged()}
+        />
+      )}
 
       {loading && <div className="empty-state">Loading…</div>}
       {error && <div className="error-banner">{error}</div>}

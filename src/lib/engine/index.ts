@@ -5,6 +5,7 @@ export * from "./intervals";
 export * from "./weeklyHours";
 export * from "./childcare";
 export * from "./coverage";
+export * from "./mumOptimiser";
 export * from "./daysOffTogether";
 export * from "./school";
 export * from "./bankHolidays";

@@ -36,6 +36,7 @@ export function AddSheet({
   const [startLocal, setStartLocal] = useState("");
   const [endLocal, setEndLocal] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [lockDay, setLockDay] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +56,7 @@ export function AddSheet({
     setSelected(null);
     setMode(null);
     setShowCustom(false);
+    setLockDay(false);
     setTitle("");
     setStartLocal("");
     setEndLocal("");
@@ -75,6 +77,7 @@ export function AddSheet({
           customStart: customFields?.start ?? null,
           customEnd: customFields?.end ?? null,
           paidMinutes: customFields?.paidMinutes ?? null,
+          locked: lockDay,
         }),
       });
       onSaved();
@@ -93,7 +96,7 @@ export function AddSheet({
     try {
       await apiFetch("/api/shifts", {
         method: "POST",
-        body: JSON.stringify({ ownerId: selected.id, date, shiftTypeId: null, customStart: null, customEnd: null }),
+        body: JSON.stringify({ ownerId: selected.id, date, shiftTypeId: null, customStart: null, customEnd: null, locked: lockDay }),
       });
       onSaved();
       onClose();
@@ -120,6 +123,7 @@ export function AddSheet({
           customStart: null,
           customEnd: null,
           note: "Annual leave",
+          locked: lockDay,
         }),
       });
       onSaved();
@@ -158,6 +162,18 @@ export function AddSheet({
       setBusy(false);
     }
   }
+
+  const lockToggle = (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 14px", fontSize: 13.5, color: "var(--muted)" }}>
+      <input
+        type="checkbox"
+        checked={lockDay}
+        onChange={(e) => setLockDay(e.target.checked)}
+        style={{ width: 18, height: 18 }}
+      />
+      Lock this day so the week planner won&apos;t change it
+    </label>
+  );
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -233,6 +249,7 @@ export function AddSheet({
             >
               ← Back
             </button>
+            {lockToggle}
             {!showCustom && (
               <div className="choice-grid">
                 {shiftTypes.map((t) => (
@@ -289,6 +306,7 @@ export function AddSheet({
             <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 14 }}>
               Mark {selected !== "FAMILY" ? selected?.name : ""} as off on {date}.
             </p>
+            {lockToggle}
             <button className="btn btn-primary btn-block btn-lg" disabled={busy} onClick={saveOff}>
               Confirm off
             </button>
@@ -308,6 +326,7 @@ export function AddSheet({
               Book {selected !== "FAMILY" ? selected?.name : ""} annual leave on {date}. This counts as a
               day off together and towards childcare cover.
             </p>
+            {lockToggle}
             <button className="btn btn-primary btn-block btn-lg" disabled={busy} onClick={saveLeave}>
               Confirm annual leave
             </button>
