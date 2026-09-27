@@ -1,11 +1,12 @@
 # Our Days — Handoff / Takeover Brief
 
-Last updated: 2026-09-27, evening (Session 2, same day as first deploy). Read
-this fully before making changes — it's the "pick this project up from zero"
-document, same idea as the sibling `siteroster` project's own `HANDOFF.md`.
-**Read §9 first if you're picking this up fresh** — it covers everything a
-second session did the same day as first deploy, including a production
-incident, and is more current than §0-§8 in places (noted inline where so).
+Last updated: 2026-09-27, evening (Session 2, same day as first deploy, after
+8 commits). Read this fully before making changes — it's the "pick this
+project up from zero" document, same idea as the sibling `siteroster`
+project's own `HANDOFF.md`. **Read §9 first if you're picking this up
+fresh** — it covers everything a second session did the same day as first
+deploy, including a production incident, and is more current than §0-§8 in
+places (noted inline where so).
 
 ---
 
@@ -53,9 +54,11 @@ was reusable, so this repo is a clean rebuild, not a port.
 
 - **Next.js 16** (App Router, TypeScript), **React 19**.
 - **Prisma + Postgres** (Supabase-hosted). Schema at `prisma/schema.prisma`,
-  one migration so far (`prisma/migrations/0001_init`). `npm run vercel-build`
-  runs `prisma migrate deploy` before `next build`, so every push applies any
-  new migration automatically — there is no manual migration step on deploy.
+  four migrations so far (`0001_init` plus three additive Session 2 ones:
+  per-term weekdays, quick-fill day/night colour defaults, strict pickup
+  age). `npm run vercel-build` runs `prisma migrate deploy` before
+  `next build`, so every push applies any new migration automatically —
+  there is no manual migration step on deploy.
 - **Auth**: `scrypt` password hashes (`src/lib/auth.ts`) + a signed HTTP-only
   JWT session cookie (`src/lib/jwt.ts`, using `jose`) with `ADMIN`/`PARENT`/
   `CHILD` roles. Deliberately no NextAuth/OAuth — see `docs/ARCHITECTURE.md`
@@ -68,13 +71,14 @@ was reusable, so this repo is a clean rebuild, not a port.
   guidance that Proxy "should not be used as a full session management or
   authorization solution."
 - **`src/lib/engine/*`** — the scheduling math. Pure functions, zero DB/UI
-  imports, fully unit-tested (`npm test`, 27 tests, `node:test`): repeating
-  pattern resolution (`pattern.ts`), DST-safe local-time→UTC conversion
-  (`intervals.ts`), the hard per-week-hours rule (`weeklyHours.ts`), the
-  childcare 3-hour allowance (`childcare.ts`), school-day lookup
+  imports, fully unit-tested (`npm test`, 73 tests as of end of Session 2,
+  `node:test`): repeating pattern resolution (`pattern.ts`), DST-safe
+  local-time→UTC conversion (`intervals.ts`), the hard per-week-hours rule
+  (`weeklyHours.ts`), the childcare allowance incl. the strict pickup-age
+  rule (`childcare.ts` — see §9.9), school-day lookup incl. per-term weekdays
   (`school.ts`), days-off-together (`daysOffTogether.ts`), a static UK
   bank-holiday table (`bankHolidays.ts` — hand-maintained, update yearly from
-  gov.uk).
+  gov.uk), the Mum shift optimiser (`mumOptimiser.ts` — see §9.2).
 - **`src/lib/calendarService.ts`** — the one place that merges a parent's
   active pattern version + any manual `WorkShift` override + a child's
   school status into a single per-day view (`getCalendarRange`). Pattern
@@ -218,7 +222,7 @@ notifications, ICS/backup export, and the photo/PDF importer needs an
 ## 8. First steps for whoever picks this up
 
 1. `git clone` this repo, `git log -10 --oneline` to see what's actually
-   committed (should show Session 2's 6 commits — §9.1 — on top of the
+   committed (should show Session 2's 8 commits — §9.1 — on top of the
    Session 1 baseline).
 2. Read `docs/ARCHITECTURE.md`, then `TODO.md` for what's left — but see §5,
    `TODO.md` undercounts what's done as of Session 2.
@@ -299,6 +303,12 @@ All pushed to both `main` and `claude/gret-residence-rota-complete-xv4094`
    ask: pasted text was getting garbled — see §9.5 for an unresolved example).
    Full details in §9.4. Inert without `ANTHROPIC_API_KEY` (§1) but fails
    gracefully (clear message, other features unaffected) without one.
+7. `1e4f41a` — Day/night colours per parent, plus a paint-style quick-fill
+   tool on the Month calendar for bulk shift entry. Full details in §9.8.
+8. `d7892b5` — A strict drop-off/pick-up rule for a young child (a
+   supervisor-age sibling is no longer automatically enough for *that*
+   child's own school run), plus self-service editing of a parent's weekly
+   hours and a school's times after creation. Full details in §9.9.
 
 ### 9.2 Mum shift optimiser — what it actually optimises for and why
 
@@ -411,7 +421,76 @@ bugs (like the original false "both parents off" pink month) were actually
 plus `npm test` (58 tests by end of session, up from 27 at first deploy),
 `tsc --noEmit`, `eslint`, and a full `next build` before pushing.
 
-### 9.8 Genuinely still open (superseding §5 for what's left)
+### 9.8 Day/night colours per parent, and the Month quick-fill paint tool
+
+Two UX requests, both from live use: colour-code each parent's day vs night
+shifts distinctly (previously every shift for a parent was one flat colour,
+day or night indistinguishable at a glance), and replace the multi-tap
+Add-sheet flow for entering a run of shifts with a tap-to-paint tool directly
+on the calendar.
+
+- `FamilyMember` gained optional `dayColor`/`nightColor`/`dayStartLocal`/
+  `dayEndLocal`/`nightStartLocal`/`nightEndLocal` (additive migration, all
+  nullable). `src/lib/quickShift.ts` resolves the actual colour/time to use,
+  with sensible defaults before anyone visits Settings: the "dad" palette
+  slot (whoever ran `/setup`) defaults to orange (day)/blue (night), the
+  "mum" slot to pink (day)/purple (night) — these are palette-*order*
+  defaults, not a hardcoded assumption about which parent is which, and are
+  fully overridable per parent.
+- `calendarService.ts` classifies each parent's resolved shift as DAY or
+  NIGHT purely from its times (the same "end ≤ start means overnight"
+  convention `intervals.ts`/`coverage.ts` already use) and resolves a
+  `displayColor` that Today/Week/Month now render instead of the old single
+  per-member colour. Settings → Family members has a colour-and-time editor
+  per parent (native colour pickers + time inputs, via the existing PATCH
+  endpoint extended to accept these fields).
+- **Quick-fill paint tool** (Month calendar): pick a parent, then
+  Days/Nights/Off/Holiday, then tap dates on the calendar above to mark them
+  (tap a marked date again to undo it), then Save applies everything in one
+  go — nothing is written until Save, and Cancel discards all pending marks.
+  "Days"/"Nights" write the parent's quick-fill colour/time config as a plain
+  custom shift; "Off"/"Holiday" reuse the exact same semantics as the
+  existing Add sheet's Off/Annual-leave options, so there's exactly one code
+  path for what an "off" or "holiday" day means, not two. Pending (unsaved)
+  taps render as a coloured ring + corner dot, visually distinct from
+  already-saved shifts, so what's about to change is always visible before
+  committing.
+
+### 9.9 Strict drop-off/pick-up rule for a young child
+
+The founder's actual situation changed mid-session: the 3-year-old's nursery
+became Mon-Fri, and — critically — an older sibling being home is **not**
+enough for that specific child's own drop-off/pick-up; it has to be an adult,
+even though the same sibling is a perfectly fine supervisor the rest of the
+time (e.g. a normal evening gap). That's a genuine rule change, not just a
+data change, so it went into the engine rather than being worked around in
+the UI:
+
+- `childcare.ts` gained `subtractIntervals` (generic interval subtraction)
+  and `pickupDutyWindows` (the configurable buffer immediately before/after
+  school start/end — empty on a day the child isn't at school, since there's
+  no school run and so no special rule that day).
+- `ChildcareRule` gained `strictPickupAge` (below this age, the
+  sibling-supervisor allowance is carved out during *that child's own*
+  pickup buffer; `null` disables it entirely — every existing household is
+  unaffected until it opts in) and `pickupBufferMinutes` (default 30).
+  Additive migration. Settings → Childcare rule has both fields, with an
+  explanation of what they do.
+- `calendarService.ts` and `optimiserService.ts` both compute the same
+  restricted `supervisorHome` — this is the household's own documented
+  invariant (see §9.3): every call site that needs childcare status computes
+  `supervisorHome` the same way, never a bespoke whole-day boolean. The Mum
+  optimiser therefore automatically avoids/penalises a week that would leave
+  the young child's pickup uncovered, with no change to its own ranking
+  logic — `childcareConflicts` was already a near-top priority (§9.2), so it
+  just started catching a real case it couldn't see before.
+- Separately (needed to actually apply the above to real data): Settings can
+  now edit an existing parent's weekly-hours requirement, and an existing
+  school's hours, **in place** — both were previously only settable at
+  creation, a real self-service gap once the founder started actively
+  tuning the household's real numbers.
+
+### 9.10 Genuinely still open (superseding §5 for what's left)
 
 Not started: What-If planner, 🏖️ annual-leave/holiday-bridging optimiser,
 Jarvis REST + MCP API, API keys, PWA/kiosk mode, notifications, ICS/calendar
