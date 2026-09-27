@@ -1,12 +1,11 @@
 # Our Days — Handoff / Takeover Brief
 
-Last updated: 2026-09-27, evening (Session 2, same day as first deploy, after
-8 commits). Read this fully before making changes — it's the "pick this
-project up from zero" document, same idea as the sibling `siteroster`
-project's own `HANDOFF.md`. **Read §9 first if you're picking this up
-fresh** — it covers everything a second session did the same day as first
-deploy, including a production incident, and is more current than §0-§8 in
-places (noted inline where so).
+Last updated: 2026-09-27, late (Session 4). Read this fully before making
+changes - it's the "pick this project up from zero" document, same idea as the
+sibling `siteroster` project's own `HANDOFF.md`. **Read §11 first if you're
+picking this up fresh**, then §10: between them they cover a whole-scheduler
+rebuild and 17 commits that §0-§9 predate. §9 is a historical record of Session
+2 and is now wrong in places - §11 says exactly where.
 
 ---
 
@@ -497,3 +496,177 @@ Jarvis REST + MCP API, API keys, PWA/kiosk mode, notifications, ICS/calendar
 export, backups. Started but incomplete: photo/PDF import (built, needs the
 API key — §9.4); the text-importer parser bug (§9.5). `TODO.md` itself was
 not updated this session and should be reconciled against this list.
+
+---
+
+## 10. Session 3 (2026-09-27, afternoon): 17 commits, never written up
+
+Session 3 shipped a run of changes straight to `main` and ended without
+updating this file. Reconstructed from `git log cccb28e..c4671d3`, oldest first:
+
+- `b1c91d4` Bigger, initialled shift colours on Month; the plan sheet stays
+  open across weeks instead of closing on each apply.
+- `7c93624` Minimum-rest rule in the optimiser (`MIN_REST_MINUTES`, 11 hours,
+  mirroring the Working Time Regulations) so it can never suggest a night
+  shift running into the next morning's long day.
+- `ec047d6` "Plan the month" chains each week's suggested Sunday into the next
+  week's "day before", so a multi-week plan can see its own proposals.
+- `f873cda` Self-service editing of a member's own name, and a child's date of
+  birth and school.
+- `ff84f5c` Settings loaded via one `/api/settings/bootstrap` call instead of
+  five or six — it was visibly slow to open.
+- `67b6d94`, `82e2da4` The calendar explains WHY a day isn't a school day, and
+  defaults an unfilled shift-type day to Off.
+- `c3f9ec7` A school can be deleted.
+- `1a584ca` Month view no longer overflows the right edge on a phone.
+- `6055560` The "days off together" highlight colour is configurable
+  (`/api/settings/appearance`).
+- `7f662c7` A family member can be given their own login (`/api/users`).
+- `66e7c84`, `ab4179f` The plan sheet shows the other parent's own shift in a
+  real column alongside each suggestion.
+- `085afff` Conflict days turn fully red on Month; first attempt at the hard
+  rule that a school-day morning handover needs an adult. **See §11 — that rule
+  was real in its unit test and inert in production.**
+- `ae846c2` The optimiser loads household data once per request, not once per
+  week — the prerequisite for planning a year.
+- `8369eea` "Plan the year" alongside "Plan the month".
+- `c4671d3` The school-holiday exception applied to the optimiser too, not just
+  the Month calendar's own check.
+
+---
+
+## 11. Session 4 (2026-09-27, late): the scheduler rebuilt on a continuous timeline
+
+This session worked from a detailed written brief (kept at
+`D:\Downloads\family_rota_scheduler_full_fix_and_audit_prompt.md` on the
+founder's machine) asking for a deep fix and audit of the scheduling engine,
+with an independent CodeRabbit review as a second phase. The work is on the
+branch `fix/continuous-timeline-scheduler` and is **not yet merged or
+deployed** — see §11.6.
+
+### 11.1 The one root cause
+
+Every scheduling bug in the brief came from the same thing: **the calendar day
+was the unit of reasoning.** Shifts were cut in half at midnight, childcare was
+judged one day at a time, and each week was planned in isolation. Weekly cards
+were never the real boundary — midnight was.
+
+Two bugs, both proved by running the old code before changing anything:
+
+1. **The unattended allowance reset at midnight.** Both parents out from 21:00
+   to 03:00 is one continuous six-hour stretch with the children alone. The
+   engine saw a three-hour gap on Tuesday and a three-hour gap on Wednesday,
+   judged each against the three-hour allowance, and called both acceptable.
+   Nothing ever saw six hours.
+2. **The school-morning rule never fired in production.** The brief's own worked
+   example (one parent leaving at 06:00, the other's night shift ending at 08:00,
+   an ordinary school day) returned HANDOVER, not a conflict. `childcareStatus`
+   excused any gap a supervisor-age sibling was home for, and the real
+   `calendarService` reported the 13-year-old as home for the whole pre-school
+   morning. The unit test asserting this case passed only because it hand-fed an
+   afternoon-only window that production never produced — a test passing for the
+   wrong reason.
+
+### 11.2 What replaced it
+
+`src/lib/engine/timeline.ts` — **the one childcare validator.** The live
+calendar, the optimiser's candidate scoring, and the check made when a plan is
+applied all go through `evaluateTimeline`. There is deliberately one
+implementation of the household's rules; the previous arrangement let the
+calendar and the planner enforce subtly different ones.
+
+- `src/lib/engine/segments.ts` — interval algebra on an unbounded minute axis. A
+  span can start on Sunday evening and end on Monday morning and still be ONE
+  span. `childcare.ts` now delegates its day-level helpers to this, so there is a
+  single implementation of the arithmetic.
+- `src/lib/engine/householdDay.ts` — `buildTimelineDay`, the single place that
+  turns a day's raw household facts into validator input. **Both**
+  `calendarService` and `optimiserService` call it. This is the structural fix
+  for §11.1's second bug: the two used to build sixty near-identical lines each,
+  and a rule tightened in one stayed loose in the other.
+- Gap lengths are **real elapsed minutes**, converted through the timezone, so
+  the night the clocks change is an hour longer or shorter exactly as it is in
+  life.
+- Every window carries a **context day either side** (`CONTEXT_DAYS` in
+  `optimiserService.ts`). The leading one already existed; the trailing one is
+  new, and is what makes a Sunday night shift running into Monday morning
+  visible at all. Chaining weeks together was never enough on its own — the last
+  week's Sunday still ran into a Monday nobody was planning.
+- `childcareStatus` and `coverage.ts` are **deleted**. Don't reintroduce a
+  day-level childcare judge: that shape is the bug.
+
+### 11.3 Rules that changed, and what the founder will see
+
+- **A school day is no longer covered all day.** For any child who actually
+  attends, an adult must be home from a configurable morning time until school
+  starts, and for a buffer after it ends. Neither an older sibling nor the
+  three-hour allowance substitutes for that part of the day.
+  New setting: `ChildcareRule.schoolRunMorningFromLocal` (defaults to `06:00`,
+  additive migration `20260927190000_add_school_run_morning_from`), editable in
+  Settings → Childcare rule alongside the existing after-school buffer.
+- `strictPickupAge` still works exactly as before and was deliberately NOT
+  retired. The broader rule subsumes it in most configurations, but the founder
+  configured it on purpose and it still carves the sibling allowance for a child
+  whose school hours differ from a sibling's.
+- **Childcare is a hard constraint in the optimiser, not a ranking term.**
+  Candidates with any conflict are removed before scoring, so no score can
+  promote an unsafe plan. `rankKey` no longer mentions conflicts at all.
+- When the hours can only be reached by accepting a gap, the optimiser returns
+  the safe plan as `best` AND the exact-hours plan as `bestWithConflicts`, with a
+  message naming the trade-off. Applying the unsafe one takes a deliberate second
+  action. When nothing is safe at all, `best` is null and the reason is given.
+- The plan sheet states the childcare verdict once for the WHOLE plan. A
+  per-week "no childcare conflicts" claim is a claim about that week only, which
+  is how a conflict spanning two weeks could hide between two reassuring cards.
+- **Expect more red days on the live calendar than before.** School mornings and
+  after-school gaps that an older sibling being home used to excuse are now
+  genuine conflicts. That is the intended change, and the most visible one.
+
+### 11.4 Applying a plan is now validated server-side
+
+`applyMumWeekPlan` re-checks the assignments through the same validator before
+writing anything, and refuses with a 409 unless `allowConflicts: true` is
+passed. The writes go through one `prisma.$transaction` instead of a
+`findUnique` plus an `upsert` per day, so a year's plan is no longer hundreds of
+sequential round trips and a half-applied week can't exist.
+`validateAssignments` is exported for anything else needing the same check.
+
+### 11.5 Tests: 116, up from 88
+
+- `tests/timeline.test.ts` — the brief's regression list: cross-week, month and
+  year boundaries; a gap crossing midnight; pre-school, after-school and
+  inside-school-hours overlaps; the asymmetry between "day + night" and "night +
+  day"; weekend 2h versus 3h01m to the minute; INSET days and bank holidays
+  inside term time; both window edges; and both DST transitions.
+- `tests/householdDay.test.ts` — pins the input shapes, including an explicit
+  test that the sibling IS recorded as home before school, so it is the
+  adult-only window doing the work and not a quirk of the inputs.
+- `tests/applyPlan.integration.test.ts` — the only test that touches a database:
+  plan, apply, read back, and confirm the calendar agrees; plus that an unsafe
+  apply is refused and writes nothing. Skips when `POSTGRES_URL` isn't set.
+- Every test builds its days through `buildTimelineDay`, on purpose. Hand-fed
+  inputs are what hid §11.1's second bug.
+- **A real bug was found in `localDateTimeToUtc` while writing these**: it
+  sampled the timezone offset at UTC noon of the date, so 00:30 on the morning
+  the clocks go forward was treated as BST when it is still GMT. It now resolves
+  in two passes. That module was previously called only by its own tests; the
+  live path depends on it now.
+
+### 11.6 Where this was left
+
+- On branch `fix/continuous-timeline-scheduler`, committed, **not pushed and not
+  merged.** The founder was asked first, because §6 gotcha #9 records that
+  pushes to `main` reach the family within minutes, and this change visibly
+  alters what the app tells them about their own week.
+- Verified locally: 116/116 tests, `tsc --noEmit` clean, `eslint` clean, a full
+  `next build`, and a real seeded household driven through the running app — the
+  school-morning conflict caught, the six-hour cross-midnight gap reported
+  against both dates, a sensible safe plan produced, and a 409 returned on trying
+  to apply an unsafe one.
+- **Phase 2 of the brief has not been done**: an independent CodeRabbit audit of
+  this change, which was always meant to follow the implementation.
+- The local Postgres used for testing lives in that session's scratchpad only and
+  will not survive it. The recipe: EnterpriseDB's "binaries only" zip (needs no
+  admin rights), `initdb`, run it on a spare port, `prisma migrate deploy`, and a
+  `.env` holding `POSTGRES_URL` — which `tests/applyPlan.integration.test.ts`
+  picks up via `process.loadEnvFile`.

@@ -1,12 +1,39 @@
 import { prisma } from "./prisma";
-import { addDays, isSchoolDay, nonSchoolDayReason, pickupDutyWindows, planMumWeek, resolvePatternDay, subtractIntervals } from "./engine";
+import {
+  DEFAULT_MAX_UNSUPERVISED_MINUTES,
+  DEFAULT_PICKUP_BUFFER_MINUTES,
+  DEFAULT_SCHOOL_RUN_MORNING_FROM,
+  addDays,
+  buildTimelineDay,
+  evaluateTimeline,
+  isSchoolDay,
+  minutesOrDefault,
+  nonSchoolDayReason,
+  planMumWeek,
+  resolvePatternDay,
+} from "./engine";
+import type {
+  AdultDay,
+  ChildDayInfo,
+  HouseholdRuleConfig,
+  TimelineGap,
+} from "./engine";
 import type {
   MumShiftOption,
   OptimiserDay,
   OptimiserResult,
   ShiftInterval,
 } from "./engine/mumOptimiser";
-import type { DayInterval, ShiftPatternSpec } from "./engine/types";
+import type { ShiftPatternSpec } from "./engine/types";
+
+/**
+ * How many days of context the planner loads either side of the range it is
+ * planning. One is enough for the real cases: a night shift the evening before
+ * runs into the first morning, and a night shift on the last planned day runs
+ * into the morning after. Both edges matter, and leaving off the trailing one
+ * was how a Sunday-night-into-Monday-morning conflict used to go unnoticed.
+ */
+const CONTEXT_DAYS = 1;
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -37,26 +64,14 @@ type HouseholdContext = {
   owner: { id: string; name: string; requiredWeeklyMinutes: number | null } | null;
   otherParent: { id: string; name: string } | null;
   hasChildren: boolean;
-  childcareRule: {
-    maxUnsupervisedMinutes: number | null;
-    appliesWeekends: boolean | null;
-    minSupervisorAge: number | null;
-    strictPickupAge: number | null;
-    pickupBufferMinutes: number | null;
-  } | null;
+  timeZone: string;
+  ruleConfig: HouseholdRuleConfig;
   shiftOptions: MumShiftOption[];
   shiftTypeById: Map<string, { startLocal: string; endLocal: string; paidMinutes: number; name: string }>;
   activePattern: (id: string, date: string) => ShiftPatternSpec | null;
   workingInterval: (id: string, date: string) => { known: boolean; shift: ShiftInterval | null };
   shiftByKey: Map<string, { locked: boolean; shiftTypeId: string | null; customStart: string | null; customEnd: string | null; paidMinutes: number | null }>;
-  childInfoFor: (date: string) => {
-    at: boolean;
-    start: number;
-    end: number;
-    dob: string | null;
-    hasSchool: boolean;
-    reason: ReturnType<typeof nonSchoolDayReason>;
-  }[];
+  childInfoFor: (date: string) => ChildDayInfo[];
 };
 
 /**
@@ -71,6 +86,8 @@ async function loadHouseholdContext(
   rangeStart: string,
   rangeEnd: string,
 ): Promise<HouseholdContext> {
+  const household = await prisma.household.findUnique({ where: { id: householdId } });
+
   const owner = await prisma.familyMember.findFirst({
     where: { id: ownerId, householdId, kind: "PARENT" },
   });
@@ -159,7 +176,7 @@ async function loadHouseholdContext(
     return { known: false, shift: null };
   }
 
-  function childInfoFor(date: string) {
+  function childInfoFor(date: string): ChildDayInfo[] {
     return children.map((c) => {
       const terms =
         c.school?.terms.map((t) => ({
@@ -169,15 +186,15 @@ async function loadHouseholdContext(
           label: t.label,
           weekdays: t.weekdays,
         })) ?? [];
-      const at = c.school ? isSchoolDay(date, terms) : false;
-      const reason = c.school && !at ? nonSchoolDayReason(date, terms) : null;
+      const attendsToday = c.school ? isSchoolDay(date, terms) : false;
+      const reason = c.school && !attendsToday ? nonSchoolDayReason(date, terms) : null;
       return {
-        at,
-        start: c.school ? toMinutes(c.school.startLocal) : 0,
-        end: c.school ? toMinutes(c.school.endLocal) : 0,
-        dob: c.dateOfBirth ? toDateStr(c.dateOfBirth) : null,
         hasSchool: Boolean(c.school),
-        reason,
+        attendsToday,
+        schoolStartMinutes: c.school ? toMinutes(c.school.startLocal) : 0,
+        schoolEndMinutes: c.school ? toMinutes(c.school.endLocal) : 0,
+        age: ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null),
+        nonSchoolReasonKind: reason?.kind ?? null,
       };
     });
   }
@@ -186,7 +203,18 @@ async function loadHouseholdContext(
     owner,
     otherParent,
     hasChildren: children.length > 0,
-    childcareRule,
+    timeZone: household?.timezone ?? "Europe/London",
+    ruleConfig: {
+      maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? DEFAULT_MAX_UNSUPERVISED_MINUTES,
+      appliesWeekends: childcareRule?.appliesWeekends ?? true,
+      minSupervisorAge: childcareRule?.minSupervisorAge ?? null,
+      strictPickupAge: childcareRule?.strictPickupAge ?? null,
+      pickupBufferMinutes: childcareRule?.pickupBufferMinutes ?? DEFAULT_PICKUP_BUFFER_MINUTES,
+      schoolRunMorningFromMinutes: minutesOrDefault(
+        childcareRule?.schoolRunMorningFromLocal,
+        DEFAULT_SCHOOL_RUN_MORNING_FROM,
+      ),
+    },
     shiftOptions,
     shiftTypeById,
     activePattern,
@@ -196,108 +224,100 @@ async function loadHouseholdContext(
   };
 }
 
-/** Builds one week's plan from an already-loaded context - no I/O. */
-function computeWeekPlan(
+/**
+ * Builds the planning window for one owner over `dates`: the days being
+ * planned, plus a context day either side whose shifts are already fixed.
+ * Shared by planning and by the check made when a plan is applied, so the two
+ * can never be looking at differently-shaped days.
+ */
+function buildWindow(
   context: HouseholdContext,
   ownerId: string,
-  weekStart: string,
-  priorMumShiftOverride: ShiftInterval | null | undefined,
-): MumWeekPlan {
-  const { owner, otherParent, childcareRule } = context;
-  if (!owner) {
-    return { best: null, alternatives: [], message: "That person isn't a parent in this household.", ownerId, ownerName: "", otherParentName: null, weekStart, requiredMinutes: null };
+  plannedDates: string[],
+  /** overrides the owner's shift on the leading context day. */
+  priorOwnShiftOverride: ShiftInterval | null | undefined,
+): { days: OptimiserDay[]; reportFrom: number; reportTo: number } {
+  const windowDates: string[] = [];
+  for (let i = CONTEXT_DAYS; i > 0; i--) windowDates.push(addDays(plannedDates[0], -i));
+  windowDates.push(...plannedDates);
+  for (let i = 1; i <= CONTEXT_DAYS; i++) {
+    windowDates.push(addDays(plannedDates[plannedDates.length - 1], i));
   }
+  const reportFrom = CONTEXT_DAYS;
+  const reportTo = CONTEXT_DAYS + plannedDates.length - 1;
 
-  const rangeStart = addDays(weekStart, -1);
-  const minSupervisorAge = childcareRule?.minSupervisorAge ?? null;
-  const strictPickupAge = childcareRule?.strictPickupAge ?? null;
-  const pickupBufferMinutes = childcareRule?.pickupBufferMinutes ?? 30;
+  const days: OptimiserDay[] = windowDates.map((date, index) => {
+    const timelineDay = buildTimelineDay(date, context.childInfoFor(date), context.ruleConfig);
+    const other = context.otherParent
+      ? context.workingInterval(context.otherParent.id, date)
+      : { known: true, shift: null };
+    const own = context.workingInterval(ownerId, date);
 
-  const optimiserDays: OptimiserDay[] = [];
-  for (let i = 0; i < 7; i++) {
-    const date = addDays(weekStart, i);
-    const other = otherParent ? context.workingInterval(otherParent.id, date) : { known: true, shift: null };
-    const childInfo = context.childInfoFor(date);
-
-    let schoolCover: DayInterval | null = null;
-    if (childInfo.length > 0 && childInfo.every((c) => c.at)) {
-      const start = Math.max(...childInfo.map((c) => c.start));
-      const end = Math.min(...childInfo.map((c) => c.end));
-      if (end > start) schoolCover = { startMinutes: start, endMinutes: end };
-    }
-    // A hard exception to the morning-handover rule: every school-linked
-    // child off for a recognised holiday/INSET/bank holiday (not merely a
-    // weekend) means there's no school run to miss (mirrors calendarService's
-    // childcareForDay, so the plan sheet and the calendar agree).
-    const schoolLinked = childInfo.filter((c) => c.hasSchool);
-    const isSchoolHoliday =
-      schoolLinked.length > 0 &&
-      schoolLinked.every(
-        (c) => c.reason?.kind === "BANK_HOLIDAY" || c.reason?.kind === "HOLIDAY" || c.reason?.kind === "INSET",
-      );
-    const supervisorHome: DayInterval[] = [];
-    if (minSupervisorAge != null) {
-      for (const c of childInfo) {
-        if ((ageOn(date, c.dob) ?? -1) < minSupervisorAge) continue;
-        if (c.at) {
-          if (c.start > 0) supervisorHome.push({ startMinutes: 0, endMinutes: c.start });
-          if (c.end < 1440) supervisorHome.push({ startMinutes: c.end, endMinutes: 1440 });
-        } else {
-          supervisorHome.push({ startMinutes: 0, endMinutes: 1440 });
-        }
-      }
-    }
-    let pickupWindows: DayInterval[] = [];
-    if (strictPickupAge != null) {
-      for (const c of childInfo) {
-        const age = ageOn(date, c.dob);
-        if (age == null || age >= strictPickupAge || !c.hasSchool) continue;
-        pickupWindows = pickupWindows.concat(
-          pickupDutyWindows({
-            attendsSchoolToday: c.at,
-            schoolStartMinutes: c.start,
-            schoolEndMinutes: c.end,
-            bufferMinutes: pickupBufferMinutes,
-          }),
-        );
-      }
-    }
-    const restrictedSupervisorHome = subtractIntervals(supervisorHome, pickupWindows);
-
-    const ownShift = context.shiftByKey.get(`${ownerId}|${date}`);
+    const ownShiftRow = context.shiftByKey.get(`${ownerId}|${date}`);
     let locked: OptimiserDay["locked"] = null;
-    if (ownShift?.locked) {
-      const type = ownShift.shiftTypeId ? context.shiftTypeById.get(ownShift.shiftTypeId) : null;
-      const startLocal = type?.startLocal ?? ownShift.customStart ?? null;
-      const endLocal = type?.endLocal ?? ownShift.customEnd ?? null;
+    const plannable = index >= reportFrom && index <= reportTo;
+    if (plannable && ownShiftRow?.locked) {
+      const type = ownShiftRow.shiftTypeId ? context.shiftTypeById.get(ownShiftRow.shiftTypeId) : null;
+      const startLocal = type?.startLocal ?? ownShiftRow.customStart ?? null;
+      const endLocal = type?.endLocal ?? ownShiftRow.customEnd ?? null;
       const shift = startLocal && endLocal ? { startLocal, endLocal } : null;
       locked = {
-        paidMinutes: type?.paidMinutes ?? ownShift.paidMinutes ?? 0,
+        paidMinutes: type?.paidMinutes ?? ownShiftRow.paidMinutes ?? 0,
         shift,
         label: type?.name ?? (shift ? "Custom shift" : "Off"),
       };
     }
 
-    optimiserDays.push({
-      date,
-      isWeekend: false,
+    // The leading context day can be overridden when several weeks are planned
+    // in one go: the previous week's own suggested Sunday isn't saved anywhere
+    // yet, so nothing else would know about it.
+    const isLeadingContextDay = index === reportFrom - 1;
+    const ownForDay =
+      isLeadingContextDay && priorOwnShiftOverride !== undefined
+        ? { known: true, shift: priorOwnShiftOverride }
+        : own;
+
+    return {
+      ...timelineDay,
       hasChildren: context.hasChildren,
       dadKnown: other.known,
       dadShift: other.shift,
+      ownKnown: ownForDay.known,
+      ownShift: ownForDay.shift,
       locked,
-      schoolCover,
-      supervisorHome: restrictedSupervisorHome,
-      isSchoolHoliday,
-    });
-  }
+    };
+  });
 
-  const priorDadShift = otherParent ? context.workingInterval(otherParent.id, rangeStart).shift : null;
-  const priorMumShift = priorMumShiftOverride !== undefined ? priorMumShiftOverride : context.workingInterval(ownerId, rangeStart).shift;
+  return { days, reportFrom, reportTo };
+}
+
+/** Builds one week's plan from an already-loaded context - no I/O. */
+function computeWeekPlan(
+  context: HouseholdContext,
+  ownerId: string,
+  weekStart: string,
+  priorOwnShiftOverride: ShiftInterval | null | undefined,
+): MumWeekPlan {
+  const { owner, otherParent } = context;
+  if (!owner) {
+    return {
+      best: null,
+      alternatives: [],
+      bestWithConflicts: null,
+      message: "That person isn't a parent in this household.",
+      ownerId,
+      ownerName: "",
+      otherParentName: null,
+      weekStart,
+      requiredMinutes: null,
+    };
+  }
 
   if (owner.requiredWeeklyMinutes == null) {
     return {
       best: null,
       alternatives: [],
+      bestWithConflicts: null,
       message: `Set ${owner.name}'s weekly hours requirement in Settings first, so a plan can hit it exactly.`,
       ownerId,
       ownerName: owner.name,
@@ -307,15 +327,19 @@ function computeWeekPlan(
     };
   }
 
+  const plannedDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const { days, reportFrom, reportTo } = buildWindow(context, ownerId, plannedDates, priorOwnShiftOverride);
+
   const result = planMumWeek({
-    days: optimiserDays,
-    priorDadShift,
-    priorMumShift,
+    timeZone: context.timeZone,
+    days,
+    reportFrom,
+    reportTo,
     requiredMinutes: owner.requiredWeeklyMinutes,
     shiftOptions: context.shiftOptions,
     rule: {
-      maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? 180,
-      appliesWeekends: childcareRule?.appliesWeekends ?? true,
+      maxUnsupervisedMinutes: context.ruleConfig.maxUnsupervisedMinutes,
+      appliesWeekends: context.ruleConfig.appliesWeekends,
     },
   });
 
@@ -347,12 +371,15 @@ export async function getMumWeekPlan(
    * `undefined` (the default) to read the real saved state as normal, or
    * `null` explicitly for "the day before was a proposed day off".
    */
-  priorMumShiftOverride?: ShiftInterval | null,
+  priorOwnShiftOverride?: ShiftInterval | null,
 ): Promise<MumWeekPlan> {
-  const weekEnd = addDays(weekStart, 6);
-  const rangeStart = addDays(weekStart, -1);
-  const context = await loadHouseholdContext(householdId, ownerId, rangeStart, weekEnd);
-  return computeWeekPlan(context, ownerId, weekStart, priorMumShiftOverride);
+  const context = await loadHouseholdContext(
+    householdId,
+    ownerId,
+    addDays(weekStart, -CONTEXT_DAYS),
+    addDays(weekStart, 6 + CONTEXT_DAYS),
+  );
+  return computeWeekPlan(context, ownerId, weekStart, priorOwnShiftOverride);
 }
 
 /**
@@ -366,9 +393,12 @@ export async function getMumWeekPlan(
  * Monday would each look independently fine, while the household's actual
  * combined situation - a parent still finishing a night shift right when the
  * other leaves for a day shift, with children who need help getting ready
- * for school - would never be checked at all. Fixes a real reported case:
- * a Sunday night shift suggested with no visibility into Monday's already-
- * known day shift and school run.
+ * for school - would never be checked at all.
+ *
+ * Chaining alone is not enough, and never was: the very last week's own
+ * Sunday still runs into a Monday nobody is planning. That is why each week is
+ * planned over a window with a trailing context day as well (see buildWindow),
+ * so the final Sunday is checked against the real, already-known Monday.
  *
  * All the weeks share ONE batch of queries covering the whole requested
  * range (see loadHouseholdContext), not one query batch per week - the only
@@ -381,24 +411,24 @@ export async function getMumMonthPlan(
   weekStarts: string[],
 ): Promise<MumWeekPlan[]> {
   if (weekStarts.length === 0) return [];
-  const rangeStart = addDays(weekStarts.reduce((a, b) => (a < b ? a : b)), -1);
-  const rangeEnd = addDays(weekStarts.reduce((a, b) => (a > b ? a : b)), 6);
+  const rangeStart = addDays(weekStarts.reduce((a, b) => (a < b ? a : b)), -CONTEXT_DAYS);
+  const rangeEnd = addDays(weekStarts.reduce((a, b) => (a > b ? a : b)), 6 + CONTEXT_DAYS);
   const context = await loadHouseholdContext(householdId, ownerId, rangeStart, rangeEnd);
 
   const results: MumWeekPlan[] = [];
   // undefined = read the real saved state (correct for the very first week too).
-  let chainedPriorMumShift: ShiftInterval | null | undefined = undefined;
+  let chainedPriorOwnShift: ShiftInterval | null | undefined = undefined;
   for (const weekStart of weekStarts) {
-    const plan = computeWeekPlan(context, ownerId, weekStart, chainedPriorMumShift);
+    const plan = computeWeekPlan(context, ownerId, weekStart, chainedPriorOwnShift);
     results.push(plan);
 
-    const sunday = plan.best?.days[6];
     // A locked Sunday is already real, saved data - the next week reading it
     // from the database (override = undefined) is exactly as accurate as
     // threading it through here, and simpler. Only an actual PROPOSAL (an
     // unlocked day, shift or off) needs to be threaded forward explicitly,
     // since that's the part nothing has saved yet.
-    chainedPriorMumShift = sunday && !sunday.locked
+    const sunday = plan.best?.days[6];
+    chainedPriorOwnShift = sunday && !sunday.locked
       ? sunday.option
         ? { startLocal: sunday.option.startLocal, endLocal: sunday.option.endLocal }
         : null
@@ -407,44 +437,142 @@ export async function getMumMonthPlan(
   return results;
 }
 
+export type ApplyPlanResult =
+  | { applied: number; blocked?: undefined }
+  | { applied: 0; blocked: { message: string; conflicts: TimelineGap[] } };
+
+/**
+ * Re-checks a set of assignments against the household's childcare rules,
+ * exactly as the planner would, before anything is written.
+ *
+ * This closes the gap between "the plan that was validated" and "the plan that
+ * was saved". The browser sends back a list of dates and shift types; without
+ * this, nothing server-side would notice if that list had drifted from what
+ * was actually checked - a stale sheet left open while a school term or the
+ * other parent's rota changed underneath it, or a request made directly
+ * against the API. The saved schedule is now validated on the way in, not
+ * merely on the way out.
+ */
+export async function validateAssignments(
+  householdId: string,
+  ownerId: string,
+  assignments: { date: string; shiftTypeId: string | null }[],
+): Promise<TimelineGap[]> {
+  if (assignments.length === 0) return [];
+  const dates = [...assignments.map((a) => a.date)].sort();
+  const context = await loadHouseholdContext(
+    householdId,
+    ownerId,
+    addDays(dates[0], -CONTEXT_DAYS),
+    addDays(dates[dates.length - 1], CONTEXT_DAYS),
+  );
+
+  // Every date from the first assignment to the last, so a gap between two
+  // assigned days is still part of the picture.
+  const plannedDates: string[] = [];
+  for (let d = dates[0]; d <= dates[dates.length - 1]; d = addDays(d, 1)) plannedDates.push(d);
+
+  const { days, reportFrom, reportTo } = buildWindow(context, ownerId, plannedDates, undefined);
+  const assignmentByDate = new Map(assignments.map((a) => [a.date, a.shiftTypeId]));
+
+  const ownDays: AdultDay[] = days.map((day, i) => {
+    if (i < reportFrom || i > reportTo) return { known: day.ownKnown, shift: day.ownShift };
+    if (day.locked) return { known: true, shift: day.locked.shift };
+    if (!assignmentByDate.has(day.date)) return { known: day.ownKnown, shift: day.ownShift };
+    const shiftTypeId = assignmentByDate.get(day.date) ?? null;
+    const type = shiftTypeId ? context.shiftTypeById.get(shiftTypeId) : null;
+    return {
+      known: true,
+      shift: type ? { startLocal: type.startLocal, endLocal: type.endLocal } : null,
+    };
+  });
+  const dadDays: AdultDay[] = days.map((day) => ({ known: day.dadKnown, shift: day.dadShift }));
+
+  const result = evaluateTimeline({
+    timeZone: context.timeZone,
+    days,
+    adults: [dadDays, ownDays],
+    rule: {
+      maxUnsupervisedMinutes: context.ruleConfig.maxUnsupervisedMinutes,
+      appliesWeekends: context.ruleConfig.appliesWeekends,
+    },
+    reportFrom,
+    reportTo,
+  });
+  return result.conflicts;
+}
+
 /**
  * Applies a chosen plan: writes the owner's shifts for the week, skipping any
  * locked day (the optimiser never proposes changes to those, and this is a
  * second guard). Days set to "off" in the plan become an explicit off entry.
+ *
+ * The assignments are re-validated first and refused if they would leave the
+ * children uncovered, unless the caller explicitly asks to apply anyway - a
+ * deliberate override, never a silent one. Everything is written in a single
+ * transaction, so a half-applied week can't exist.
  */
 export async function applyMumWeekPlan(
   householdId: string,
   ownerId: string,
   assignments: { date: string; shiftTypeId: string | null }[],
-): Promise<{ applied: number }> {
+  options: { allowConflicts?: boolean } = {},
+): Promise<ApplyPlanResult> {
   const owner = await prisma.familyMember.findFirst({ where: { id: ownerId, householdId, kind: "PARENT" } });
   if (!owner) throw new Error("Not a parent in this household");
 
-  let applied = 0;
-  for (const a of assignments) {
-    const date = new Date(`${a.date}T00:00:00.000Z`);
-    const existing = await prisma.workShift.findUnique({ where: { ownerId_date: { ownerId, date } } });
-    if (existing?.locked) continue; // never overwrite a locked day
-
-    let paidMinutes: number | null = null;
-    if (a.shiftTypeId) {
-      const type = await prisma.shiftType.findFirst({ where: { id: a.shiftTypeId, householdId } });
-      if (!type) continue;
-      paidMinutes = type.paidMinutes;
+  if (!options.allowConflicts) {
+    const conflicts = await validateAssignments(householdId, ownerId, assignments);
+    if (conflicts.length > 0) {
+      return {
+        applied: 0,
+        blocked: {
+          message: `This plan would leave the children without cover: ${conflicts[0].explanation}`,
+          conflicts,
+        },
+      };
     }
-    await prisma.workShift.upsert({
-      where: { ownerId_date: { ownerId, date } },
-      create: {
-        householdId,
-        ownerId,
-        date,
-        shiftTypeId: a.shiftTypeId,
-        paidMinutes,
-        source: "MANUAL",
-      },
-      update: { shiftTypeId: a.shiftTypeId, customStart: null, customEnd: null, paidMinutes, source: "MANUAL" },
-    });
-    applied += 1;
   }
-  return { applied };
+
+  // Resolve every shift type and existing row up front, so the write itself is
+  // one short transaction rather than a sequence of round trips per day.
+  const dates = assignments.map((a) => new Date(`${a.date}T00:00:00.000Z`));
+  const [existingRows, types] = await Promise.all([
+    prisma.workShift.findMany({ where: { ownerId, date: { in: dates } } }),
+    prisma.shiftType.findMany({
+      where: {
+        householdId,
+        id: { in: assignments.map((a) => a.shiftTypeId).filter((id): id is string => Boolean(id)) },
+      },
+    }),
+  ]);
+  const lockedDates = new Set(existingRows.filter((r) => r.locked).map((r) => toDateStr(r.date)));
+  const typeById = new Map(types.map((t) => [t.id, t]));
+
+  const writable = assignments.filter((a) => {
+    if (lockedDates.has(a.date)) return false; // never overwrite a locked day
+    if (a.shiftTypeId && !typeById.has(a.shiftTypeId)) return false; // unknown shift type
+    return true;
+  });
+
+  await prisma.$transaction(
+    writable.map((a) => {
+      const date = new Date(`${a.date}T00:00:00.000Z`);
+      const paidMinutes = a.shiftTypeId ? typeById.get(a.shiftTypeId)?.paidMinutes ?? null : null;
+      return prisma.workShift.upsert({
+        where: { ownerId_date: { ownerId, date } },
+        create: {
+          householdId,
+          ownerId,
+          date,
+          shiftTypeId: a.shiftTypeId,
+          paidMinutes,
+          source: "MANUAL",
+        },
+        update: { shiftTypeId: a.shiftTypeId, customStart: null, customEnd: null, paidMinutes, source: "MANUAL" },
+      });
+    }),
+  );
+
+  return { applied: writable.length };
 }

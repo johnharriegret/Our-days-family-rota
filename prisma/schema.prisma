@@ -245,6 +245,13 @@ model ChildcareRule {
   // sibling supervision still applies as normal.
   strictPickupAge        Int?
   pickupBufferMinutes    Int       @default(30)
+  // The time of day from which a school morning needs an actual adult at home,
+  // for any child who genuinely attends that day: waking them, breakfast,
+  // getting them dressed and doing the school run. Between this time and the
+  // school's start time neither an older sibling nor the unattended allowance
+  // counts as cover. Stored as "HH:MM" local wall clock; null falls back to
+  // 06:00.
+  schoolRunMorningFromLocal String? @default("06:00")
   effectiveFrom          DateTime  @default(now())
 
   @@index([householdId, effectiveFrom])

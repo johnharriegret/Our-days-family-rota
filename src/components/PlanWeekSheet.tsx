@@ -27,10 +27,22 @@ type PlanMetrics = {
   familyDaysTogether: number;
   coupleDaytimeOff: number;
 };
-type WeekPlan = { days: PlanDay[]; metrics: PlanMetrics };
+/** One stretch with nobody available, as the server explained it. */
+type PlanConflict = {
+  startDate: string;
+  startLocal: string;
+  endDate: string;
+  endLocal: string;
+  elapsedMinutes: number;
+  crossesMidnight: boolean;
+  explanation: string;
+};
+type WeekPlan = { days: PlanDay[]; metrics: PlanMetrics; conflicts: PlanConflict[] };
 type PlanResponse = {
   best: WeekPlan | null;
   alternatives: WeekPlan[];
+  /** the closest plan when every option has a childcare conflict - never a safe suggestion. */
+  bestWithConflicts: WeekPlan | null;
   message?: string;
   ownerId: string;
   ownerName: string;
@@ -84,6 +96,7 @@ function PlanCard({
   onApply,
   busy,
   applied,
+  unsafe,
 }: {
   plan: WeekPlan;
   label: string;
@@ -94,6 +107,8 @@ function PlanCard({
   onApply: () => void;
   busy: boolean;
   applied?: boolean;
+  /** true for the closest option when no conflict-free plan exists. */
+  unsafe?: boolean;
 }) {
   const otherInitials = otherParentName ? initials(otherParentName) : null;
   return (
@@ -122,13 +137,24 @@ function PlanCard({
         })}
       </div>
       <Metrics m={plan.metrics} />
+      {plan.conflicts.length > 0 && (
+        <ul className="plan-conflicts">
+          {plan.conflicts.map((c, i) => (
+            <li key={i}>{c.explanation}</li>
+          ))}
+        </ul>
+      )}
       {applied ? (
         <div className="pill pill-good btn-block" style={{ justifyContent: "center", padding: "13px 20px" }}>
           <Check size={15} /> Applied
         </div>
       ) : (
-        <button className="btn btn-primary btn-block" disabled={busy} onClick={onApply}>
-          {busy ? "Applying…" : "Apply this plan"}
+        <button
+          className={unsafe ? "btn btn-ghost btn-block" : "btn btn-primary btn-block"}
+          disabled={busy}
+          onClick={onApply}
+        >
+          {busy ? "Applying…" : unsafe ? "Apply anyway, with the gap above" : "Apply this plan"}
         </button>
       )}
     </div>
@@ -158,6 +184,10 @@ export function PlanWeekSheet({
   // close the sheet just to show that it worked; the other weeks' suggestions
   // stay exactly as they were so they can still be reviewed and applied too.
   const [appliedWeeks, setAppliedWeeks] = useState<Set<string>>(new Set());
+
+  // How many of the weeks asked for actually have a safe plan. `best` is only
+  // ever set for a childcare-safe plan, so this is simply a count of those.
+  const overall = { safeWeeks: plans.filter((p) => p.best).length };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -192,20 +222,23 @@ export function PlanWeekSheet({
     load();
   }, [load]);
 
-  async function applyPlan(plan: WeekPlan) {
+  async function applyPlan(plan: WeekPlan, allowConflicts = false) {
     if (!ownerId) return;
     const assignments = plan.days.filter((d) => !d.locked).map((d) => ({ date: d.date, shiftTypeId: d.option?.id ?? null }));
+    // The server re-checks these assignments and refuses them if they would
+    // leave the children uncovered, so applying a plan with a known gap has to
+    // say so explicitly rather than slipping through.
     await apiFetch("/api/insights/plan-mum-week", {
       method: "POST",
-      body: JSON.stringify({ ownerId, assignments }),
+      body: JSON.stringify({ ownerId, assignments, allowConflicts }),
     });
   }
 
-  async function applyOne(plan: WeekPlan, weekStart: string) {
+  async function applyOne(plan: WeekPlan, weekStart: string, allowConflicts = false) {
     setBusy(true);
     setError(null);
     try {
-      await applyPlan(plan);
+      await applyPlan(plan, allowConflicts);
       onApplied();
       if (!isMonth) {
         onClose();
@@ -226,6 +259,8 @@ export function PlanWeekSheet({
     setBusy(true);
     setError(null);
     try {
+      // Only the weeks with a safe plan. A week where every option has a gap
+      // is left alone deliberately - it needs a decision, not a bulk apply.
       for (const p of plans) if (p.best) await applyPlan(p.best);
       onApplied();
       onClose();
@@ -256,6 +291,22 @@ export function PlanWeekSheet({
         {loading && <div className="empty-state">Working out the best fit…</div>}
         {error && <div className="error-banner">{error}</div>}
 
+        {/* The childcare verdict is stated for the WHOLE plan, once. Saying
+            "no childcare conflicts" on each week's own card would be a claim
+            about that week only, which is how a conflict spanning two weeks
+            used to be able to hide between two reassuring cards. */}
+        {!loading && !error && plans.length > 0 && (
+          <div className={overall.safeWeeks === plans.length ? "pill pill-good" : "setup-banner"} style={{ marginBottom: 12 }}>
+            {overall.safeWeeks === plans.length
+              ? plans.length === 1
+                ? "This plan keeps the children covered all week."
+                : `All ${plans.length} weeks keep the children covered.`
+              : overall.safeWeeks === 0
+                ? "No safe plan was found. Every option leaves a gap where nobody is available — see the reasons below."
+                : `${overall.safeWeeks} of ${plans.length} weeks have a safe plan. The rest leave a gap where nobody is available — see the reasons below.`}
+          </div>
+        )}
+
         {!loading && isMonth && plans.some((p) => p.best) && (
           <button className="btn btn-primary btn-block" disabled={busy} onClick={applyAll} style={{ marginBottom: 14 }}>
             {busy ? "Applying…" : `Apply best fit for the whole ${scopeWord}`}
@@ -266,7 +317,18 @@ export function PlanWeekSheet({
           plans.map((data, wi) => (
             <div key={data.weekStart} style={{ marginBottom: isMonth ? 18 : 0 }}>
               {isMonth && <div className="plan-alt-heading" style={{ marginBottom: 8 }}>Week of {weekLabel(data.weekStart)}</div>}
-              {data.message && !data.best && <div className="setup-banner">{data.message}</div>}
+              {data.message && <div className="setup-banner">{data.message}</div>}
+              {data.bestWithConflicts && (
+                <PlanCard
+                  plan={data.bestWithConflicts}
+                  label={data.best ? "Hits the hours, but leaves a gap" : "Closest option — not safe as it stands"}
+                  otherParentName={data.otherParentName}
+                  onApply={() => applyOne(data.bestWithConflicts!, data.weekStart, true)}
+                  busy={busy}
+                  applied={appliedWeeks.has(data.weekStart)}
+                  unsafe
+                />
+              )}
               {data.best && (
                 <>
                   <PlanCard

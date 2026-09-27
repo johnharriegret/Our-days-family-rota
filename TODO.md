@@ -1,4 +1,29 @@
-# Remaining work (Phases 2–5)
+# Remaining work
+
+> **Reconciled 2026-09-27 (Session 4).** This file had drifted a long way
+> behind the code. Everything below marked DONE was shipped in Sessions 2-4;
+> the phase headings are kept so the original plan is still readable, but
+> `HANDOFF.md` §9-§11 is the accurate record of what exists.
+>
+> Done since this file was written: childcare conflicts wired into the
+> calendar; the shift optimiser built, retuned for shared time off, and
+> rebuilt on a continuous timeline with childcare as a hard constraint;
+> day/shift locking; per-term weekdays; text and photo/PDF school-calendar
+> import; day/night colours and the Month quick-fill tool; plan the week,
+> month and year; per-member logins; server-side validation when a plan is
+> applied.
+>
+> Genuinely NOT started: the "What if?" planner, the annual-leave bridging
+> optimiser, the Jarvis REST + MCP API and API keys, PWA/kiosk mode,
+> notifications, and ICS export/backups.
+>
+> Also outstanding, from the Session 4 brief: **Phase 2 of that brief, an
+> independent CodeRabbit audit of the scheduler rebuild.** And one known bug:
+> the text school-calendar importer merged two source lines into one garbled
+> entry (`HANDOFF.md` §9.5) - undiagnosed, and needs the founder's original
+> pasted text to reproduce.
+
+## The original phased plan
 
 Phase 1 is built: auth/roles, family members, Dad's repeating pattern engine
 + editor, Mum's one-tap shift types + manual entry, school terms, events,
@@ -9,12 +34,14 @@ See `docs/ARCHITECTURE.md` for the full design these build on.
 
 ## Phase 2
 
-- Wire `lib/engine/childcare.ts` into `calendarService.ts` and show
-  SAFE/HANDOVER/CHILDCARE_NEEDED banners on the Week/Month views.
+- DONE - childcare is wired into the calendar (conflict banners on Today/Week,
+  fully red day cells on Month). The engine itself was since rebuilt: see
+  `lib/engine/timeline.ts`, not `childcare.ts`, for the rules.
 - `lib/engine/mumOptimiser.ts` — the "✨ Plan Mum's Week" constraint search
   (priority order is in the architecture doc §3) + its UI panel and
   `[APPLY PLAN]` flow.
-- Day/shift locking UI (the `WorkShift.locked` field already exists).
+- DONE - day locking in the Add sheet; the optimiser and the apply path both
+  refuse to touch a locked day.
 - The "What if?" preview sheet.
 
 ## Phase 3

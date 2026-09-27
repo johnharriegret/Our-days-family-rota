@@ -41,9 +41,11 @@ export async function POST(request: Request) {
   return withApi(async () => {
     const session = await requireRole("ADMIN", "PARENT");
     const body = await request.json();
-    const { ownerId, assignments } = body as {
+    const { ownerId, assignments, allowConflicts } = body as {
       ownerId?: string;
       assignments?: { date: string; shiftTypeId: string | null }[];
+      /** apply a plan that has a known childcare conflict - a deliberate override. */
+      allowConflicts?: boolean;
     };
     if (!ownerId || !Array.isArray(assignments)) {
       return apiError("ownerId and assignments are required", 422);
@@ -51,7 +53,19 @@ export async function POST(request: Request) {
     for (const a of assignments) {
       if (!a || !DATE_RE.test(a.date)) return apiError("each assignment needs a valid date", 422);
     }
-    const result = await applyMumWeekPlan(session.householdId, ownerId, assignments);
+    // Whatever the browser sends is re-checked against the household's
+    // childcare rules here, so the schedule that gets saved is a schedule that
+    // has actually been validated - not just one that looked fine in a sheet
+    // that may have been open for a while.
+    const result = await applyMumWeekPlan(session.householdId, ownerId, assignments, {
+      allowConflicts: allowConflicts === true,
+    });
+    if (result.blocked) {
+      return NextResponse.json(
+        { error: result.blocked.message, conflicts: result.blocked.conflicts },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(result);
   });
 }

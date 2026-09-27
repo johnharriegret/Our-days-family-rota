@@ -20,18 +20,29 @@ export async function POST(request: Request) {
   return withApi(async () => {
     const session = await requireRole("ADMIN", "PARENT");
     const body = await request.json();
-    const { maxUnsupervisedMinutes, appliesWeekends, minSupervisorAge, strictPickupAge, pickupBufferMinutes } = body as {
+    const {
+      maxUnsupervisedMinutes,
+      appliesWeekends,
+      minSupervisorAge,
+      strictPickupAge,
+      pickupBufferMinutes,
+      schoolRunMorningFromLocal,
+    } = body as {
       maxUnsupervisedMinutes?: number;
       appliesWeekends?: boolean;
       minSupervisorAge?: number | null;
       strictPickupAge?: number | null;
       pickupBufferMinutes?: number;
+      schoolRunMorningFromLocal?: string | null;
     };
     if (!maxUnsupervisedMinutes || maxUnsupervisedMinutes < 0) {
       return apiError("maxUnsupervisedMinutes must be a positive number", 422);
     }
     if (pickupBufferMinutes != null && pickupBufferMinutes < 0) {
       return apiError("pickupBufferMinutes must be a positive number", 422);
+    }
+    if (schoolRunMorningFromLocal != null && !/^\d{1,2}:\d{2}$/.test(schoolRunMorningFromLocal)) {
+      return apiError("schoolRunMorningFromLocal must be a time like 06:00", 422);
     }
     const rule = await prisma.childcareRule.create({
       data: {
@@ -41,6 +52,7 @@ export async function POST(request: Request) {
         minSupervisorAge: minSupervisorAge ?? null,
         strictPickupAge: strictPickupAge ?? null,
         pickupBufferMinutes: pickupBufferMinutes ?? 30,
+        schoolRunMorningFromLocal: schoolRunMorningFromLocal ?? "06:00",
       },
     });
     return NextResponse.json({ rule });

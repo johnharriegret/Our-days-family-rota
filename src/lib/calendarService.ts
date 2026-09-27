@@ -1,16 +1,19 @@
 import { prisma } from "./prisma";
 import {
+  DEFAULT_MAX_UNSUPERVISED_MINUTES,
+  DEFAULT_PICKUP_BUFFER_MINUTES,
+  DEFAULT_SCHOOL_RUN_MORNING_FROM,
   addDays,
-  childcareStatus,
-  homeIntervalsForDay,
+  buildTimelineDay,
+  evaluateTimeline,
   isSchoolDay,
+  minutesOrDefault,
   nonSchoolDayReason,
-  pickupDutyWindows,
   resolvePatternDay,
-  subtractIntervals,
 } from "./engine";
 import { classifyShiftKind, resolveQuickShiftConfig } from "./quickShift";
-import type { ChildcareResult, DayInterval, ShiftPatternSpec } from "./engine/types";
+import type { AdultDay, ChildDayInfo, TimelineDay } from "./engine";
+import type { ChildcareResult, ShiftPatternSpec } from "./engine/types";
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -115,6 +118,11 @@ export async function getCalendarRange(
   const fromDate = new Date(`${from}T00:00:00.000Z`);
   const toDate = new Date(`${to}T00:00:00.000Z`);
 
+  // The household's own timezone drives every wall-clock-to-real-time
+  // conversion, so a gap that spans the night the clocks change is measured in
+  // the hours it actually lasted.
+  const household = await prisma.household.findUnique({ where: { id: householdId } });
+
   const members = await prisma.familyMember.findMany({
     where: { householdId, archived: false },
     include: { school: { include: { terms: true } } },
@@ -173,11 +181,22 @@ export async function getCalendarRange(
   // so a half-set-up household never shows a false "both parents off".
   const ownersWithShiftTypes = new Set(shiftTypes.map((t) => t.ownerId));
 
-  // Fetch one day before `from` too, so an overnight shift starting the evening
-  // before the range still counts against the first morning's childcare cover.
-  const prevDate = new Date(`${addDays(from, -1)}T00:00:00.000Z`);
+  // Fetch one day either side of the range. The day before matters because an
+  // overnight shift starting that evening runs into the first morning; the day
+  // after matters because a shift on the LAST day can run into the morning
+  // after it, and a conflict there is still caused by this range's shifts.
+  // Without both, the first and last days of any view report a childcare
+  // result computed from an incomplete picture.
+  const contextFrom = addDays(from, -1);
+  const contextTo = addDays(to, 1);
   const workShifts = await prisma.workShift.findMany({
-    where: { householdId, date: { gte: prevDate, lte: toDate } },
+    where: {
+      householdId,
+      date: {
+        gte: new Date(`${contextFrom}T00:00:00.000Z`),
+        lte: new Date(`${contextTo}T00:00:00.000Z`),
+      },
+    },
   });
   const workShiftByKey = new Map(workShifts.map((s) => [`${s.ownerId}|${toDateStr(s.date)}`, s]));
 
@@ -276,42 +295,12 @@ export async function getCalendarRange(
     };
   }
 
-  // The minutes-of-day (0-1440) a parent is at HOME on `date`, accounting for an
-  // overnight shift that started the evening before spilling into the morning.
-  function parentHomeIntervals(memberId: string, date: string): DayInterval[] {
-    const today = parentWorkFor(memberId, date);
-    const yesterday = parentWorkFor(memberId, addDays(date, -1));
-    const todayShift =
-      today.working && today.startLocal && today.endLocal
-        ? { startLocal: today.startLocal, endLocal: today.endLocal }
-        : null;
-    const yesterdayShift =
-      yesterday.working && yesterday.startLocal && yesterday.endLocal
-        ? { startLocal: yesterday.startLocal, endLocal: yesterday.endLocal }
-        : null;
-    return homeIntervalsForDay(todayShift, yesterdayShift);
-  }
-
   const childMembers = members.filter((m) => m.kind === "CHILD");
   const parentMembers = members.filter((m) => m.kind === "PARENT");
 
-  function childcareForDay(date: string): CalendarChildcare | null {
-    if (childMembers.length === 0 || parentMembers.length === 0) return null;
-    // Can't judge cover unless every parent's status for the day is actually
-    // known. (An unknown previous day just means no overnight shift spills into
-    // this morning, which parentHomeIntervals already handles.)
-    const allKnown = parentMembers.every((p) => parentWorkFor(p.id, date).known);
-    if (!allKnown) return null;
-
-    // An adult is home during the complement of their away-at-work time.
-    const covered: DayInterval[] = [];
-    for (const p of parentMembers) {
-      for (const home of parentHomeIntervals(p.id, date)) covered.push(home);
-    }
-
-    // School only covers the children while EVERY child is at school - a child at
-    // home still needs an adult - so use the intersection of their school hours.
-    const childSchool = childMembers.map((c) => {
+  /** One day's facts for every child, in the engine's plain shape. */
+  function childInfoFor(date: string): ChildDayInfo[] {
+    return childMembers.map((c) => {
       const terms =
         c.school?.terms.map((t) => ({
           startDate: toDateStr(t.startDate),
@@ -320,95 +309,69 @@ export async function getCalendarRange(
           label: t.label,
           weekdays: t.weekdays,
         })) ?? [];
-      const at = c.school ? isSchoolDay(date, terms) : false;
-      const reason = c.school && !at ? nonSchoolDayReason(date, terms) : null;
+      const attendsToday = c.school ? isSchoolDay(date, terms) : false;
+      const reason = c.school && !attendsToday ? nonSchoolDayReason(date, terms) : null;
       return {
-        at,
-        start: c.school ? toMinutes(c.school.startLocal) : 0,
-        end: c.school ? toMinutes(c.school.endLocal) : 0,
         hasSchool: Boolean(c.school),
-        reason,
+        attendsToday,
+        schoolStartMinutes: c.school ? toMinutes(c.school.startLocal) : 0,
+        schoolEndMinutes: c.school ? toMinutes(c.school.endLocal) : 0,
+        age: ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null),
+        nonSchoolReasonKind: reason?.kind ?? null,
       };
     });
-    if (childSchool.every((c) => c.at)) {
-      const start = Math.max(...childSchool.map((c) => c.start));
-      const end = Math.min(...childSchool.map((c) => c.end));
-      if (end > start) covered.push({ startMinutes: start, endMinutes: end });
-    }
-
-    // A hard exception to the morning-handover rule: if EVERY child who's
-    // actually enrolled in a school is off for a recognised school holiday,
-    // INSET day, or bank holiday (not just "it's the weekend", which is
-    // handled separately below), there's no school run to miss, so a
-    // before-school gap is allowed the same way a weekend gap is. An
-    // ordinary school day never sets this, so the pre-existing hard rule
-    // stands: a handover gap with nobody home is CHILDCARE_NEEDED regardless
-    // of the 3-hour allowance, since the kids need help getting ready for
-    // school.
-    const schoolLinked = childSchool.filter((c) => c.hasSchool);
-    const isSchoolHoliday =
-      schoolLinked.length > 0 &&
-      schoolLinked.every(
-        (c) => c.reason?.kind === "BANK_HOLIDAY" || c.reason?.kind === "HOLIDAY" || c.reason?.kind === "INSET",
-      );
-
-    // Minutes a supervisor-age child is at home (and could supervise): the whole
-    // day when they're off school, or before/after school on a school day.
-    const minSupervisorAge = childcareRule?.minSupervisorAge ?? null;
-    const supervisorHome: DayInterval[] = [];
-    if (minSupervisorAge != null) {
-      childMembers.forEach((c, i) => {
-        const age = ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null);
-        if (age == null || age < minSupervisorAge) return;
-        if (childSchool[i].at) {
-          if (childSchool[i].start > 0) supervisorHome.push({ startMinutes: 0, endMinutes: childSchool[i].start });
-          if (childSchool[i].end < 1440) supervisorHome.push({ startMinutes: childSchool[i].end, endMinutes: 1440 });
-        } else {
-          supervisorHome.push({ startMinutes: 0, endMinutes: 1440 });
-        }
-      });
-    }
-
-    // Below strictPickupAge, a sibling can never substitute for an adult
-    // specifically around that child's own school drop-off/pick-up - carve
-    // those buffer windows out of the sibling allowance, whoever else is home.
-    const strictPickupAge = childcareRule?.strictPickupAge ?? null;
-    const pickupBufferMinutes = childcareRule?.pickupBufferMinutes ?? 30;
-    let pickupWindows: DayInterval[] = [];
-    if (strictPickupAge != null) {
-      childMembers.forEach((c, i) => {
-        const age = ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null);
-        if (age == null || age >= strictPickupAge || !c.school) return;
-        pickupWindows = pickupWindows.concat(
-          pickupDutyWindows({
-            attendsSchoolToday: childSchool[i].at,
-            schoolStartMinutes: childSchool[i].start,
-            schoolEndMinutes: childSchool[i].end,
-            bufferMinutes: pickupBufferMinutes,
-          }),
-        );
-      });
-    }
-    const restrictedSupervisorHome = subtractIntervals(supervisorHome, pickupWindows);
-
-    const result = childcareStatus({
-      date,
-      coveredIntervals: covered,
-      supervisorHome: restrictedSupervisorHome,
-      rule: {
-        maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? 180,
-        appliesWeekends: childcareRule?.appliesWeekends ?? true,
-        minSupervisorAge,
-      },
-      isSchoolHoliday,
-    });
-    return {
-      status: result.status,
-      explanation: result.explanation,
-      gapStart: result.gapStart,
-      gapEnd: result.gapEnd,
-    };
   }
+
+  // Childcare is judged once, over one continuous timeline covering the
+  // requested range plus a context day either side - never day by day, and
+  // never week by week. That is what lets a stretch of unattended time that
+  // crosses midnight (or a Sunday night shift running into Monday morning) be
+  // seen as the single long stretch it really is.
+  const ruleConfig = {
+    maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? DEFAULT_MAX_UNSUPERVISED_MINUTES,
+    appliesWeekends: childcareRule?.appliesWeekends ?? true,
+    minSupervisorAge: childcareRule?.minSupervisorAge ?? null,
+    strictPickupAge: childcareRule?.strictPickupAge ?? null,
+    pickupBufferMinutes: childcareRule?.pickupBufferMinutes ?? DEFAULT_PICKUP_BUFFER_MINUTES,
+    schoolRunMorningFromMinutes: minutesOrDefault(
+      childcareRule?.schoolRunMorningFromLocal,
+      DEFAULT_SCHOOL_RUN_MORNING_FROM,
+    ),
+  };
+
+  const windowDates: string[] = [];
+  for (let d = contextFrom; d <= contextTo; d = addDays(d, 1)) windowDates.push(d);
+
+  const timelineDays: TimelineDay[] = windowDates.map((date) =>
+    buildTimelineDay(date, childInfoFor(date), ruleConfig),
+  );
+  const adults: AdultDay[][] = parentMembers.map((p) =>
+    windowDates.map((date) => {
+      const pd = parentWorkFor(p.id, date);
+      return {
+        known: pd.known,
+        shift:
+          pd.working && pd.startLocal && pd.endLocal
+            ? { startLocal: pd.startLocal, endLocal: pd.endLocal }
+            : null,
+      };
+    }),
+  );
+
+  const childcareByDate: Record<string, ChildcareResult | null> =
+    parentMembers.length > 0
+      ? evaluateTimeline({
+          timeZone: household?.timezone ?? "Europe/London",
+          days: timelineDays,
+          adults,
+          rule: {
+            maxUnsupervisedMinutes: ruleConfig.maxUnsupervisedMinutes,
+            appliesWeekends: ruleConfig.appliesWeekends,
+          },
+          reportFrom: 1,
+          reportTo: windowDates.length - 2,
+        }).byDate
+      : {};
 
   const days: CalendarDayView[] = [];
   let cursor = from;
@@ -485,7 +448,17 @@ export async function getCalendarRange(
       members: memberEntries,
       events: eventsByDate.get(date) ?? [],
       bothParentsOff,
-      childcare: childcareForDay(date),
+      childcare: (() => {
+        const result = childcareByDate[date] ?? null;
+        return result
+          ? {
+              status: result.status,
+              explanation: result.explanation,
+              gapStart: result.gapStart,
+              gapEnd: result.gapEnd,
+            }
+          : null;
+      })(),
     });
     cursor = addDays(cursor, 1);
   }

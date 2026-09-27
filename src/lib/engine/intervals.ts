@@ -21,11 +21,19 @@ export function timeZoneOffsetMinutesAt(instant: Date, timeZone: string): number
 
 /**
  * Converts a local wall-clock date+time in `timeZone` to a UTC instant.
- * Samples the zone's offset at UTC-noon of that calendar date (a point in time
- * that is never inside the UK's 01:00-02:00 clock-change window) rather than at
- * the target time itself, so it never lands on an ambiguous or skipped local hour.
- * Shift boundaries in this app are always on the hour/half-hour outside that
- * window, so this approximation is exact for every real shift time.
+ *
+ * Resolved in two passes, because the offset that applies depends on the very
+ * instant being calculated: guess by reading the offset as if the wall-clock
+ * reading were already UTC, then re-read the offset at that guess and correct.
+ * Two passes is always enough for a zone whose offset changes by an hour.
+ *
+ * An earlier version sampled the offset once, at UTC noon of the same date, on
+ * the reasoning that noon is never inside the clock-change window. That is true
+ * of noon but not of the times being converted: 00:30 on the morning the clocks
+ * go forward is still GMT while noon that day is already BST, so a gap from
+ * 00:30 to 03:30 measured three hours when only two were lived through. On the
+ * two days a year it matters, that hour is the difference between a childcare
+ * gap being within the household's allowance and over it.
  */
 export function localDateTimeToUtc(
   date: string,
@@ -34,9 +42,10 @@ export function localDateTimeToUtc(
 ): Date {
   const [year, month, day] = date.split("-").map(Number);
   const [hour, minute] = timeLocal.split(":").map(Number);
-  const referenceInstant = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-  const offsetMinutes = timeZoneOffsetMinutesAt(referenceInstant, timeZone);
-  return new Date(Date.UTC(year, month - 1, day, hour, minute, 0) - offsetMinutes * 60_000);
+  const asIfUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  const firstGuess = asIfUtc - timeZoneOffsetMinutesAt(new Date(asIfUtc), timeZone) * 60_000;
+  const corrected = asIfUtc - timeZoneOffsetMinutesAt(new Date(firstGuess), timeZone) * 60_000;
+  return new Date(corrected);
 }
 
 /**

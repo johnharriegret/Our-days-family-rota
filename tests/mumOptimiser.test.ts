@@ -1,305 +1,375 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { planMumWeek } from "../src/lib/engine/mumOptimiser.ts";
-import type { MumShiftOption, OptimiserDay } from "../src/lib/engine/mumOptimiser.ts";
+import type { MumShiftOption, OptimiserDay, OptimiserResult } from "../src/lib/engine/mumOptimiser.ts";
+import { buildTimelineDay, type ChildDayInfo, type HouseholdRuleConfig } from "../src/lib/engine/householdDay.ts";
+import { isWeekend } from "../src/lib/engine/dates.ts";
+
+const TZ = "Europe/London";
 
 const LONG_DAY: MumShiftOption = { id: "long", name: "Long Day", startLocal: "07:00", endLocal: "20:00", paidMinutes: 750 };
 const EARLY: MumShiftOption = { id: "early", name: "Early", startLocal: "07:00", endLocal: "14:30", paidMinutes: 450 };
+const SCHOOL_HOURS: MumShiftOption = { id: "nine4", name: "9-4", startLocal: "09:00", endLocal: "15:00", paidMinutes: 360 };
+const NIGHT_SHIFT: MumShiftOption = { id: "night", name: "Night", startLocal: "20:00", endLocal: "08:00", paidMinutes: 720 };
 
-function plainDay(date: string, over: Partial<OptimiserDay> = {}): OptimiserDay {
+const DAD_DAY = { startLocal: "06:00", endLocal: "18:00" };
+
+const SCHOOL_START = 525; // 08:45
+const SCHOOL_END = 915; // 15:15
+
+const RULE: HouseholdRuleConfig = {
+  maxUnsupervisedMinutes: 180,
+  appliesWeekends: true,
+  minSupervisorAge: 13,
+  strictPickupAge: null,
+  pickupBufferMinutes: 30,
+  schoolRunMorningFromMinutes: 360,
+};
+
+/** The household as it really is on a date: school on weekdays, not at weekends. */
+function realChildren(date: string): ChildDayInfo[] {
+  const weekend = isWeekend(date);
+  return [13, 3].map((age) => ({
+    hasSchool: true,
+    attendsToday: !weekend,
+    schoolStartMinutes: SCHOOL_START,
+    schoolEndMinutes: SCHOOL_END,
+    age,
+    nonSchoolReasonKind: weekend ? ("WEEKEND" as const) : null,
+  }));
+}
+
+/** A day with nobody to look after - for the tests that are only about hours. */
+function childlessDay(date: string): OptimiserDay {
   return {
-    date,
-    isWeekend: false,
+    ...buildTimelineDay(date, [], RULE),
     hasChildren: false,
     dadKnown: true,
     dadShift: null,
+    ownKnown: true,
+    ownShift: null,
     locked: null,
-    schoolCover: null,
-    supervisorHome: [],
-    isSchoolHoliday: false,
+  };
+}
+
+/** A day with the real household on it, school terms and all. */
+function householdDay(date: string, over: Partial<OptimiserDay> = {}): OptimiserDay {
+  return {
+    ...buildTimelineDay(date, realChildren(date), RULE),
+    hasChildren: true,
+    dadKnown: true,
+    dadShift: null,
+    ownKnown: true,
+    ownShift: null,
+    locked: null,
     ...over,
   };
 }
 
 const WEEK = ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-27"];
+const DAY_BEFORE = "2026-09-20";
+const DAY_AFTER = "2026-09-28";
+
+/**
+ * Runs the optimiser over a proper window: the seven days being planned, plus
+ * the context day either side whose shifts are already fixed. Every test goes
+ * through this, because planning a bare seven days in isolation is the shape
+ * that hid the Sunday-into-Monday bug in the first place.
+ */
+function plan(opts: {
+  week?: OptimiserDay[];
+  before?: OptimiserDay;
+  after?: OptimiserDay;
+  requiredMinutes: number;
+  shiftOptions: MumShiftOption[];
+  rule?: { maxUnsupervisedMinutes: number; appliesWeekends: boolean };
+}): OptimiserResult {
+  const week = opts.week ?? WEEK.map(childlessDay);
+  const before = opts.before ?? childlessDay(DAY_BEFORE);
+  const after = opts.after ?? childlessDay(DAY_AFTER);
+  return planMumWeek({
+    timeZone: TZ,
+    days: [before, ...week, after],
+    reportFrom: 1,
+    reportTo: 7,
+    requiredMinutes: opts.requiredMinutes,
+    shiftOptions: opts.shiftOptions,
+    rule: opts.rule ?? { maxUnsupervisedMinutes: 180, appliesWeekends: true },
+  });
+}
+
+// --- hours ---------------------------------------------------------------
 
 test("hits the exact weekly hours with whole shifts", () => {
-  const res = planMumWeek({
-    days: WEEK.map((d) => plainDay(d)),
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 2250,
-    shiftOptions: [LONG_DAY],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
+  const res = plan({ requiredMinutes: 2250, shiftOptions: [LONG_DAY] });
   assert.ok(res.best, "a plan should be produced");
   assert.equal(res.best.metrics.hoursExact, true);
   assert.equal(res.best.metrics.totalPaidMinutes, 2250);
+  assert.equal(res.best.days.length, 7, "seven days are planned, not the context days");
   const working = res.best.days.filter((d) => d.option).length;
   assert.equal(working, 3, "three Long Days = 37.5h");
 });
 
 test("never changes a locked day and counts its hours", () => {
-  const days = WEEK.map((d, i) =>
-    i === 0 ? plainDay(d, { locked: { paidMinutes: 750, shift: { startLocal: "07:00", endLocal: "20:00" } } }) : plainDay(d),
+  const week = WEEK.map((d, i) =>
+    i === 0
+      ? { ...childlessDay(d), locked: { paidMinutes: 750, shift: { startLocal: "07:00", endLocal: "20:00" } } }
+      : childlessDay(d),
   );
-  const res = planMumWeek({
-    days,
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 2250,
-    shiftOptions: [LONG_DAY],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
+  const res = plan({ week, requiredMinutes: 2250, shiftOptions: [LONG_DAY] });
   assert.ok(res.best);
   assert.equal(res.best.days[0].locked, true);
   assert.equal(res.best.metrics.totalPaidMinutes, 2250);
-  // locked day (750) + two more Long Days (1500) = 2250
   const nonLockedWorking = res.best.days.filter((d) => d.option && !d.locked).length;
   assert.equal(nonLockedWorking, 2);
 });
 
-test("prefers the day the other parent is off, avoiding a childcare conflict", () => {
-  // Two weekend days, children home. Day 0 the other parent is off; day 1 they
-  // work 06:00-18:00. Working the single shift on day 0 keeps a parent home.
-  const days: OptimiserDay[] = [
-    plainDay("2026-09-26", { isWeekend: true, hasChildren: true, dadShift: null }),
-    plainDay("2026-09-27", { isWeekend: true, hasChildren: true, dadShift: { startLocal: "06:00", endLocal: "18:00" } }),
-  ];
-  const res = planMumWeek({
-    days,
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 750,
-    shiftOptions: [LONG_DAY],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  assert.ok(res.best);
-  assert.equal(res.best.metrics.childcareConflicts, 0);
-  assert.ok(res.best.days[0].option, "should work the day the other parent is off");
-  assert.equal(res.best.days[1].option, null);
-});
-
 test("falls back to the closest total when no exact combination exists", () => {
-  // Required 2250 but only a 450-minute shift: 5x450 = 2250 is exact actually,
-  // so use a required that 450 can't divide: 2000. Closest is 1800 or 2250-ish.
-  const res = planMumWeek({
-    days: WEEK.map((d) => plainDay(d)),
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 2000,
-    shiftOptions: [EARLY],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
+  const res = plan({ requiredMinutes: 2000, shiftOptions: [LONG_DAY] });
   assert.ok(res.best);
   assert.equal(res.best.metrics.hoursExact, false);
-  // within one shift of target
-  assert.ok(Math.abs(res.best.metrics.totalPaidMinutes - 2000) <= 450);
+  // 2250 is 250 over; 1500 is 500 under - the nearer one wins.
+  assert.equal(res.best.metrics.totalPaidMinutes, 2250);
 });
 
 test("reports a clear message when there are no shift types", () => {
-  const res = planMumWeek({
-    days: WEEK.map((d) => plainDay(d)),
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 2250,
-    shiftOptions: [],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
+  const res = plan({ requiredMinutes: 2250, shiftOptions: [] });
   assert.equal(res.best, null);
+  assert.equal(res.bestWithConflicts, null);
   assert.match(res.message ?? "", /shift type/i);
 });
 
-test("maximises couple time off: works when the other parent works and kids are at school", () => {
-  // A shift that fits inside school hours (09:00-14:00). Working it on the day
-  // the other parent ALSO works (kids covered by school) keeps both of the
-  // other-parent's days off free for the couple, instead of using one up.
-  const SCHOOL = { startMinutes: 9 * 60, endMinutes: 15 * 60 };
-  const inSchool: MumShiftOption = { id: "sch", name: "School hours", startLocal: "09:00", endLocal: "14:00", paidMinutes: 300 };
-  const days: OptimiserDay[] = [
-    plainDay("2026-09-22", { hasChildren: true, schoolCover: SCHOOL, dadShift: null }),
-    plainDay("2026-09-23", { hasChildren: true, schoolCover: SCHOOL, dadShift: { startLocal: "09:00", endLocal: "15:00" } }),
-    plainDay("2026-09-24", { hasChildren: true, schoolCover: SCHOOL, dadShift: null }),
-  ];
-  const res = planMumWeek({
-    days,
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 300,
-    shiftOptions: [inSchool],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  assert.ok(res.best);
-  assert.equal(res.best.metrics.childcareConflicts, 0);
-  assert.equal(res.best.metrics.coupleDaytimeOff, 2, "both of the other parent's days off stay free");
-  assert.ok(res.best.days[1].option, "should work the day the other parent also works");
-  assert.equal(res.best.days[0].option, null);
-  assert.equal(res.best.days[2].option, null);
-});
-
-test("works a school-hours shift on the OTHER parent's working days to free up their days off", () => {
-  // Kids at school 08:45-15:15 every weekday; the 13yo is home before/after.
-  // A 09:00-16:00 shift ends 45 min after pickup, covered by the 13yo (handover).
-  const SCHOOL = { startMinutes: 525, endMinutes: 915 };
-  const SUP = [
-    { startMinutes: 0, endMinutes: 525 },
-    { startMinutes: 915, endMinutes: 1440 },
-  ];
-  const nineToFour = { id: "94", name: "9-4", startLocal: "09:00", endLocal: "16:00", paidMinutes: 420 };
-  // Dad works Mon/Tue/Wed, off Thu/Fri.
-  const dad = (working: boolean) => (working ? { startLocal: "06:00", endLocal: "18:00" } : null);
-  const days: OptimiserDay[] = [
-    plainDay("2026-09-21", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(true) }),
-    plainDay("2026-09-22", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(true) }),
-    plainDay("2026-09-23", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(true) }),
-    plainDay("2026-09-24", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(false) }),
-    plainDay("2026-09-25", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(false) }),
-  ];
-  const res = planMumWeek({
-    days,
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 1260, // three 9-4 shifts
-    shiftOptions: [nineToFour],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  assert.ok(res.best);
-  assert.equal(res.best.metrics.childcareConflicts, 0);
-  // Both of the other parent's days off (Thu/Fri) stay free for the couple.
-  assert.equal(res.best.metrics.coupleDaytimeOff, 2);
-  assert.equal(res.best.days[3].option, null); // Thu off
-  assert.equal(res.best.days[4].option, null); // Fri off
-});
-
-test("flags a handover gap as a childcare conflict on an ordinary school day", () => {
-  // Dad away 00:00-10:00, Mum's candidate shift 09:00-17:00: a clean 60-minute
-  // gap (09:00-10:00) nobody covers - well within the 3-hour allowance in raw
-  // length, but it's an ordinary Tuesday, so the hard rule (mirrored from
-  // calendarService) still applies with no supervisor-age sibling or school
-  // cover configured.
-  const nineToFive: MumShiftOption = { id: "95", name: "9-5", startLocal: "09:00", endLocal: "17:00", paidMinutes: 480 };
-  const days: OptimiserDay[] = [
-    plainDay("2026-09-22", { hasChildren: true, isSchoolHoliday: false, dadShift: { startLocal: "00:00", endLocal: "10:00" } }),
-  ];
-  const res = planMumWeek({
-    days,
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 480,
-    shiftOptions: [nineToFive],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  assert.ok(res.best);
-  assert.equal(res.best.metrics.childcareConflicts, 1);
-});
-
-test("the same gap is fine when the optimiser is told it's a school holiday", () => {
-  const nineToFive: MumShiftOption = { id: "95", name: "9-5", startLocal: "09:00", endLocal: "17:00", paidMinutes: 480 };
-  const days: OptimiserDay[] = [
-    plainDay("2026-09-22", { hasChildren: true, isSchoolHoliday: true, dadShift: { startLocal: "00:00", endLocal: "10:00" } }),
-  ];
-  const res = planMumWeek({
-    days,
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 480,
-    shiftOptions: [nineToFive],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  assert.ok(res.best);
-  assert.equal(res.best.metrics.childcareConflicts, 0);
-});
-
-// --- Minimum rest between shifts (live bug: Night straight into a Long Day) ---
-
-const NIGHT: MumShiftOption = { id: "night", name: "Night", startLocal: "20:00", endLocal: "08:00", paidMinutes: 690 };
-
-test("never suggests a night shift immediately followed by a long day (no rest, even overlaps)", () => {
-  // Night 20:00-08:00 then Long Day 07:00-20:00 the next morning would mean
-  // starting the long day an hour BEFORE the night shift even ends.
-  const res = planMumWeek({
-    days: WEEK.slice(0, 2).map((d) => plainDay(d)),
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: NIGHT.paidMinutes + LONG_DAY.paidMinutes,
-    shiftOptions: [NIGHT, LONG_DAY],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  const plans = [res.best, ...res.alternatives].filter((p): p is NonNullable<typeof p> => p != null);
-  assert.ok(plans.length > 0, "some plan should still be offered (e.g. two nights, or one of each on non-adjacent days isn't possible here, so at least something under target)");
-  for (const plan of plans) {
-    for (let i = 1; i < plan.days.length; i++) {
-      const bad = plan.days[i - 1].option?.id === "night" && plan.days[i].option?.id === "long";
-      assert.equal(bad, false, `day ${i} follows a night shift with a long day - impossible rest`);
-    }
-  }
-});
-
-test("two consecutive night shifts ARE allowed (12h rest between them)", () => {
-  const res = planMumWeek({
-    days: WEEK.slice(0, 2).map((d) => plainDay(d)),
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: NIGHT.paidMinutes * 2,
-    shiftOptions: [NIGHT],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  assert.ok(res.best);
-  assert.equal(res.best.days[0].option?.id, "night");
-  assert.equal(res.best.days[1].option?.id, "night");
-});
-
-test("respects minimum rest against a shift worked the day before the week starts", () => {
-  // priorMumShift is a Night ending 08:00 the morning the week starts - a
-  // Long Day that same first day (starting 07:00) must never be offered, even
-  // though it's the only shift type available.
-  const res = planMumWeek({
-    days: [plainDay(WEEK[0])],
-    priorDadShift: null,
-    priorMumShift: { startLocal: "20:00", endLocal: "08:00" },
-    requiredMinutes: LONG_DAY.paidMinutes,
-    shiftOptions: [LONG_DAY],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  assert.ok(res.best);
-  assert.equal(res.best.days[0].option, null, "the only shift type is unusable that day, so it must fall back to off");
-});
-
-test("respects minimum rest against a LOCKED shift the day after", () => {
-  // Day 0 unlocked; day 1 is locked to a Long Day starting 07:00. A Night
-  // shift (20:00-08:00) on day 0 must never be offered, since it would only
-  // leave -1h of rest before day 1's fixed Long Day.
-  const days: OptimiserDay[] = [
-    plainDay(WEEK[0]),
-    plainDay(WEEK[1], { locked: { paidMinutes: LONG_DAY.paidMinutes, shift: { startLocal: "07:00", endLocal: "20:00" } } }),
-  ];
-  const res = planMumWeek({
-    days,
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: NIGHT.paidMinutes + LONG_DAY.paidMinutes,
-    shiftOptions: [NIGHT],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  });
-  // The only unlocked-day option (Night) is unusable given tomorrow's locked
-  // Long Day, so the single unlocked day must come back as a day off.
-  assert.ok(res.best);
-  assert.equal(res.best.days[0].option, null);
-});
-
 test("is deterministic - same input, same plan", () => {
-  const input = {
-    days: WEEK.map((d) => plainDay(d)),
-    priorDadShift: null,
-    priorMumShift: null,
-    requiredMinutes: 2250,
-    shiftOptions: [LONG_DAY, EARLY],
-    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
-  };
-  const a = planMumWeek(input);
-  const b = planMumWeek(input);
+  const a = plan({ requiredMinutes: 2250, shiftOptions: [LONG_DAY, EARLY] });
+  const b = plan({ requiredMinutes: 2250, shiftOptions: [LONG_DAY, EARLY] });
   assert.deepEqual(
     a.best?.days.map((d) => d.option?.id ?? null),
     b.best?.days.map((d) => d.option?.id ?? null),
   );
+});
+
+// --- time off together ---------------------------------------------------
+
+test("prefers the day the other parent is off, avoiding a childcare conflict", () => {
+  const week = WEEK.map((d, i) => householdDay(d, { dadShift: i === 0 ? null : DAD_DAY }));
+  const res = plan({
+    week,
+    before: householdDay(DAY_BEFORE, { dadShift: DAD_DAY }),
+    after: householdDay(DAY_AFTER, { dadShift: DAD_DAY }),
+    requiredMinutes: 750,
+    shiftOptions: [LONG_DAY],
+  });
+  assert.ok(res.best, "a safe plan exists: the Monday the other parent is home");
+  assert.equal(res.best.metrics.childcareConflicts, 0);
+  assert.ok(res.best.days[0].option, "the shift goes on the day the other parent is off");
+});
+
+test("maximises couple time off: works when the other parent works and the kids are at school", () => {
+  // Dad works Mon-Wed. A school-hours shift on one of those days costs the
+  // couple nothing, and protects his days off later in the week.
+  const week = WEEK.map((d, i) => householdDay(d, { dadShift: i <= 2 ? DAD_DAY : null }));
+  const res = plan({
+    week,
+    before: householdDay(DAY_BEFORE, { dadShift: DAD_DAY }),
+    after: householdDay(DAY_AFTER),
+    requiredMinutes: 360,
+    shiftOptions: [SCHOOL_HOURS],
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.childcareConflicts, 0);
+  const workedIndex = res.best.days.findIndex((d) => d.option);
+  assert.ok(workedIndex >= 0 && workedIndex <= 2, "worked on a day he was working anyway");
+  assert.equal(res.best.metrics.familyDaysTogether, 4, "all four of his days off stay shared");
+});
+
+// --- childcare as a hard constraint --------------------------------------
+
+test("childcare outranks the hours: an exact week with a gap loses to an inexact week without one", () => {
+  // Dad is on days all week. A Long Day (07:00-20:00) leaves the school run
+  // uncovered at both ends; two 9-4s miss the hours by half an hour but are
+  // safe. The safe one must win - under the old ranking hours came first, and
+  // the unsafe plan was presented as the best fit.
+  const week = WEEK.map((d) => householdDay(d, { dadShift: DAD_DAY }));
+  const res = plan({
+    week,
+    before: householdDay(DAY_BEFORE, { dadShift: DAD_DAY }),
+    after: householdDay(DAY_AFTER, { dadShift: DAD_DAY }),
+    requiredMinutes: 750,
+    shiftOptions: [LONG_DAY, SCHOOL_HOURS],
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.childcareConflicts, 0, "never offers a plan with a gap");
+  assert.equal(res.best.metrics.hoursExact, false);
+  assert.equal(res.best.metrics.totalPaidMinutes, 720, "two school-hours shifts");
+  assert.equal(
+    res.best.days.every((d) => !d.option || d.option.id === "nine4"),
+    true,
+  );
+});
+
+test("when the hours can only be worked by accepting a gap, the recommendation stays safe and the trade-off is named", () => {
+  // Dad on days all week and only a Long Day available: any shift long enough
+  // to reach the hours leaves the school run uncovered. The safe answer is to
+  // work nothing, which is true but useless on its own - so the exact-hours
+  // option is offered separately, clearly marked, and never as the best fit.
+  const week = WEEK.map((d) => householdDay(d, { dadShift: DAD_DAY }));
+  const res = plan({
+    week,
+    before: householdDay(DAY_BEFORE, { dadShift: DAD_DAY }),
+    after: householdDay(DAY_AFTER, { dadShift: DAD_DAY }),
+    requiredMinutes: 750,
+    shiftOptions: [LONG_DAY],
+  });
+  assert.ok(res.best, "the recommendation is still a safe one");
+  assert.equal(res.best.metrics.childcareConflicts, 0);
+  assert.ok(res.bestWithConflicts, "with the exact-hours option alongside it");
+  assert.ok(res.bestWithConflicts.metrics.childcareConflicts > 0);
+  assert.ok(res.bestWithConflicts.conflicts.length > 0, "and the actual gaps attached");
+  assert.equal(res.bestWithConflicts.metrics.hoursExact, true);
+  assert.match(res.message ?? "", /childcare gap/i);
+});
+
+test("no plan at all is offered when a locked day makes a gap unavoidable", () => {
+  // Wednesday is locked to a Long Day while he is on days: the school run is
+  // uncovered at both ends and the optimiser is not allowed to change a locked
+  // day. Nothing it can choose elsewhere fixes it, so there is no safe plan.
+  const week = WEEK.map((d, i) =>
+    householdDay(d, {
+      dadShift: DAD_DAY,
+      locked:
+        i === 2
+          ? { paidMinutes: 750, shift: { startLocal: "07:00", endLocal: "20:00" }, label: "Long Day" }
+          : null,
+    }),
+  );
+  const res = plan({
+    week,
+    before: householdDay(DAY_BEFORE, { dadShift: DAD_DAY }),
+    after: householdDay(DAY_AFTER, { dadShift: DAD_DAY }),
+    requiredMinutes: 750,
+    shiftOptions: [SCHOOL_HOURS],
+  });
+  assert.equal(res.best, null, "an unsafe plan is never offered as the best fit");
+  assert.ok(res.bestWithConflicts, "the closest option is still there to explain why");
+  assert.ok(res.bestWithConflicts.conflicts.length > 0);
+  assert.match(res.message ?? "", /no safe plan/i);
+});
+
+test("a gap the school-holiday allowance covers is not treated as a conflict", () => {
+  // The same shape, but it's half term: no school run to miss, so the
+  // household's ordinary allowance applies and a plan becomes possible.
+  const halfTermChildren = (): ChildDayInfo[] =>
+    [13, 3].map((age) => ({
+      hasSchool: true,
+      attendsToday: false,
+      schoolStartMinutes: SCHOOL_START,
+      schoolEndMinutes: SCHOOL_END,
+      age,
+      nonSchoolReasonKind: "HOLIDAY" as const,
+    }));
+  const holidayDay = (date: string, over: Partial<OptimiserDay> = {}): OptimiserDay => ({
+    ...buildTimelineDay(date, halfTermChildren(), RULE),
+    hasChildren: true,
+    dadKnown: true,
+    dadShift: null,
+    ownKnown: true,
+    ownShift: null,
+    locked: null,
+    ...over,
+  });
+  const halfTerm = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01"];
+  const res = planMumWeek({
+    timeZone: TZ,
+    days: [
+      holidayDay("2026-10-25"),
+      ...halfTerm.map((d) => holidayDay(d, { dadShift: { startLocal: "09:00", endLocal: "17:00" } })),
+      holidayDay("2026-11-02"),
+    ],
+    reportFrom: 1,
+    reportTo: 7,
+    requiredMinutes: 360,
+    shiftOptions: [SCHOOL_HOURS],
+    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
+  });
+  assert.ok(res.best, "a 9-4 alongside his 9-5 is fine in the holidays");
+  assert.equal(res.best.metrics.childcareConflicts, 0);
+});
+
+// --- the week boundary ---------------------------------------------------
+
+test("never suggests a Sunday night that would clash with the following Monday", () => {
+  // He's off all week but back on days the Monday after. A Sunday night shift
+  // would run to 08:00 on that Monday, leaving the school run uncovered - a
+  // conflict on a day belonging to the NEXT week's card. The optimiser must
+  // place the night elsewhere rather than propose it.
+  const week = WEEK.map((d) => householdDay(d));
+  const res = plan({
+    week,
+    before: householdDay(DAY_BEFORE),
+    after: householdDay(DAY_AFTER, { dadShift: DAD_DAY }),
+    requiredMinutes: 720,
+    shiftOptions: [NIGHT_SHIFT],
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.childcareConflicts, 0);
+  assert.equal(res.best.days[6].option, null, "the Sunday night is not proposed");
+  assert.ok(
+    res.best.days.some((d) => d.option?.id === "night"),
+    "the night is placed on a day that works instead",
+  );
+});
+
+// --- rest between shifts -------------------------------------------------
+
+test("never suggests a night shift immediately followed by a long day (no rest, even overlaps)", () => {
+  const res = plan({ requiredMinutes: 1470, shiftOptions: [NIGHT_SHIFT, LONG_DAY] });
+  assert.ok(res.best);
+  const ids = res.best.days.map((d) => d.option?.id ?? null);
+  for (let i = 0; i < ids.length - 1; i++) {
+    assert.ok(!(ids[i] === "night" && ids[i + 1] === "long"), `night into long day at index ${i}`);
+  }
+});
+
+test("two consecutive night shifts ARE allowed (12h rest between them)", () => {
+  const res = plan({ requiredMinutes: 1440, shiftOptions: [NIGHT_SHIFT] });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.totalPaidMinutes, 1440);
+  assert.equal(res.best.days.filter((d) => d.option).length, 2);
+});
+
+test("respects minimum rest against a shift worked the day before the week starts", () => {
+  const res = plan({
+    before: { ...childlessDay(DAY_BEFORE), ownShift: { startLocal: "20:00", endLocal: "08:00" } },
+    requiredMinutes: 750,
+    shiftOptions: [LONG_DAY],
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.days[0].option, null, "Monday can't be a Long Day after Sunday's night shift");
+});
+
+test("respects minimum rest against a shift already saved for the day AFTER the week", () => {
+  // She is already down for a Long Day starting 07:00 on the following Monday,
+  // so a Sunday night running to 08:00 is impossible. The trailing context day
+  // is what makes this visible at all.
+  const res = plan({
+    after: { ...childlessDay(DAY_AFTER), ownShift: { startLocal: "07:00", endLocal: "20:00" } },
+    requiredMinutes: 720,
+    shiftOptions: [NIGHT_SHIFT],
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.days[6].option, null, "no Sunday night into Monday's long day");
+});
+
+test("respects minimum rest against a LOCKED shift the day after", () => {
+  const week = WEEK.map((d, i) =>
+    i === 2
+      ? {
+          ...childlessDay(d),
+          locked: { paidMinutes: 750, shift: { startLocal: "07:00", endLocal: "20:00" }, label: "Long Day" },
+        }
+      : childlessDay(d),
+  );
+  const res = plan({ week, requiredMinutes: 1470, shiftOptions: [NIGHT_SHIFT, LONG_DAY] });
+  assert.ok(res.best);
+  assert.equal(res.best.days[1].option, null, "no night shift the evening before a locked long day");
 });

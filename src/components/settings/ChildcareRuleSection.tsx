@@ -9,6 +9,7 @@ export type ChildcareRule = {
   minSupervisorAge: number | null;
   strictPickupAge: number | null;
   pickupBufferMinutes: number;
+  schoolRunMorningFromLocal: string | null;
 };
 
 function draftFrom(rule: ChildcareRule | null) {
@@ -18,6 +19,7 @@ function draftFrom(rule: ChildcareRule | null) {
     minSupervisorAge: rule?.minSupervisorAge != null ? String(rule.minSupervisorAge) : "13",
     strictPickupAge: rule?.strictPickupAge != null ? String(rule.strictPickupAge) : "",
     pickupBufferMinutes: rule?.pickupBufferMinutes ?? 30,
+    schoolRunMorningFromLocal: rule?.schoolRunMorningFromLocal ?? "06:00",
   };
 }
 
@@ -37,6 +39,7 @@ export function ChildcareRuleSection({
   const [minSupervisorAge, setMinSupervisorAge] = useState(draft0.minSupervisorAge);
   const [strictPickupAge, setStrictPickupAge] = useState(draft0.strictPickupAge);
   const [pickupBufferMinutes, setPickupBufferMinutes] = useState(draft0.pickupBufferMinutes);
+  const [schoolRunMorningFromLocal, setSchoolRunMorningFromLocal] = useState(draft0.schoolRunMorningFromLocal);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -48,6 +51,7 @@ export function ChildcareRuleSection({
     setMinSupervisorAge(d.minSupervisorAge);
     setStrictPickupAge(d.strictPickupAge);
     setPickupBufferMinutes(d.pickupBufferMinutes);
+    setSchoolRunMorningFromLocal(d.schoolRunMorningFromLocal);
   }, [initialRule]);
 
   async function save() {
@@ -62,6 +66,7 @@ export function ChildcareRuleSection({
           minSupervisorAge: minSupervisorAge ? Number(minSupervisorAge) : null,
           strictPickupAge: strictPickupAge ? Number(strictPickupAge) : null,
           pickupBufferMinutes,
+          schoolRunMorningFromLocal,
         }),
       });
       setSaved(true);
@@ -103,6 +108,31 @@ export function ChildcareRuleSection({
 
       <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0 14px", paddingTop: 14 }}>
         <p style={{ color: "var(--muted)", fontSize: 13.5, marginBottom: 10 }}>
+          On a school day somebody has to wake the children, get them ready and take them — and be there to collect
+          them. From the time below until school starts, and for the buffer after school ends, an adult has to be at
+          home: neither an older sibling nor the {hours}-hour allowance counts for that part of the day.
+        </p>
+        <div className="field">
+          <label>A school morning needs an adult at home from</label>
+          <input
+            type="time"
+            value={schoolRunMorningFromLocal}
+            onChange={(e) => setSchoolRunMorningFromLocal(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Adult needed for this long after school ends (minutes)</label>
+          <input
+            type="number"
+            min={0}
+            value={pickupBufferMinutes}
+            onChange={(e) => setPickupBufferMinutes(Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0 14px", paddingTop: 14 }}>
+        <p style={{ color: "var(--muted)", fontSize: 13.5, marginBottom: 10 }}>
           A young child (e.g. a toddler) can&apos;t be collected from school/nursery by an older sibling — this makes
           sure an actual adult is always the one covering their drop-off and pick-up, whoever else is home.
         </p>
@@ -116,17 +146,6 @@ export function ChildcareRuleSection({
             onChange={(e) => setStrictPickupAge(e.target.value)}
           />
         </div>
-        {strictPickupAge && (
-          <div className="field">
-            <label>Drop-off/pick-up buffer either side of school hours (minutes)</label>
-            <input
-              type="number"
-              min={0}
-              value={pickupBufferMinutes}
-              onChange={(e) => setPickupBufferMinutes(Number(e.target.value))}
-            />
-          </div>
-        )}
       </div>
 
       {saved && <div className="pill pill-good" style={{ marginBottom: 12 }}>Saved</div>}
