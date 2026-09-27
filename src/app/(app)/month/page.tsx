@@ -70,6 +70,19 @@ function mondayOf(date: string): string {
   return addDays(date, -weekdayIndexMondayFirst(date));
 }
 
+function parentSlot(name: string): 0 | 1 {
+  // Jeanicar is deliberately lane two. The other household parent occupies
+  // lane one even if their display name changes, so the calendar never jumps.
+  return /jean|^jg$/i.test(name) || initials(name) === "JG" ? 1 : 0;
+}
+
+function childMarkerColor(name: string, fallback: string): string {
+  const lower = name.toLowerCase();
+  if (lower.includes("clark")) return "#176b4d";
+  if (lower.includes("thea")) return "#a63d45";
+  return `var(--${fallback})`;
+}
+
 // The Monday of each week that has any day inside this month.
 function weekStartsForMonth(monthStart: string): string[] {
   const last = addDays(monthStart, daysInMonth(monthStart) - 1);
@@ -287,12 +300,10 @@ export default function MonthPage() {
             if (hasConflict && day.childcare) titleLines.push(`⚠ ${day.childcare.explanation}`);
             const mark = pending.get(day.date);
             const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction);
-            const children = day.members.filter((m) => m.memberKind === "CHILD");
-            const schoolBadge = children.length === 0
-              ? null
-              : children.every((child) => child.label.startsWith("School"))
-                ? "School"
-                : children.map((child) => child.label.replace(/^Home ·?\s*/, "")).find(Boolean) ?? "Home";
+            const parentRows = day.members.filter((member) => member.memberKind === "PARENT").sort((a, b) => parentSlot(a.name) - parentSlot(b.name));
+            const children = day.members.filter((member) => member.memberKind === "CHILD");
+            const hasBankHoliday = children.some((child) => /bank holiday/i.test(child.label));
+            const insetChildren = children.filter((child) => /inset/i.test(child.label));
             return (
               <div
                 key={day.date}
@@ -301,26 +312,27 @@ export default function MonthPage() {
                   ...(day.bothParentsOff && !hasConflict ? { background: `${togetherColor}33` } : undefined),
                   ...(isToday ? { outline: "2px solid var(--accent)" } : undefined),
                   ...(mark ? { boxShadow: `inset 0 0 0 3px ${pendingColor(mark)}` } : undefined),
-                  ...(canPaint ? { cursor: "pointer" } : undefined),
+                  cursor: "pointer",
                 }}
                 title={titleLines.join("\n")}
                 onClick={canPaint ? () => tapDate(day.date) : () => setEditingDay(day)}
               >
                 <span className="month-cell-daynum">{dayNum}</span>
-                <div className="shift-pills">
-                  {day.members
-                    .filter((m) => !m.isOff && m.memberKind === "PARENT")
-                    .map((m) => (
-                      <span
-                        key={m.memberId}
-                        className="shift-pill"
-                        style={{ background: m.displayColor ?? `var(--${m.colorToken})` }}
-                      >
-                        {initials(m.name)}
-                      </span>
-                    ))}
+                <div className="parent-lanes">
+                  {[0, 1].map((slot) => {
+                    const parent = parentRows.find((member) => parentSlot(member.name) === slot);
+                    return parent ? <span key={parent.memberId} className={`shift-pill${parent.isOff ? " off" : ""}`} style={parent.isOff ? undefined : { background: parent.displayColor ?? `var(--${parent.colorToken})` }}>
+                      {initials(parent.name)}{parent.isOff ? " · off" : ""}
+                    </span> : <span className="shift-pill off" key={slot}>{slot === 0 ? "HG" : "JG"} · —</span>;
+                  })}
                 </div>
-                {schoolBadge && <span className={`school-badge${schoolBadge === "School" ? " at-school" : ""}`}>{schoolBadge}</span>}
+                <div className="child-marker-row" aria-label="School status">
+                  {children.map((child) => <span key={child.memberId} className={`child-school-dot${child.label.startsWith("School") ? " at-school" : " home"}`} style={{ background: childMarkerColor(child.name, child.colorToken) }} title={`${child.name}: ${child.label}`} />)}
+                </div>
+                <div className="exception-marker-row" aria-label="School exceptions">
+                  {hasBankHoliday && <span className="exception-marker bank" title="Bank holiday">BH</span>}
+                  {insetChildren.map((child) => <span key={child.memberId} className="exception-marker inset" title={`${child.name}: INSET day`} style={{ background: childMarkerColor(child.name, child.colorToken) }}>IN</span>)}
+                </div>
                 {mark && (
                   <span
                     style={{
@@ -369,6 +381,12 @@ export default function MonthPage() {
             </div>;
           })}
           {editingDay.members.filter((member) => member.memberKind === "CHILD").map((member) => <div className="row-sub" key={member.memberId}>{member.name}: {member.label}</div>)}
+          {editingDay.events.length > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+              <strong style={{ fontSize: 13 }}>Appointments &amp; activities</strong>
+              {editingDay.events.map((event) => <div className="row-sub" key={event.id}>{event.startLocal ? `${event.startLocal} · ` : ""}{event.title}</div>)}
+            </div>
+          )}
         </div>
       )}
 
