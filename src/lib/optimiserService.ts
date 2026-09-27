@@ -168,9 +168,19 @@ export async function getMumWeekPlan(
       const end = Math.min(...childInfo.map((c) => c.end));
       if (end > start) schoolCover = { startMinutes: start, endMinutes: end };
     }
-    const supervisorHomeAllowance =
-      minSupervisorAge != null &&
-      childInfo.some((c) => !c.at && (ageOn(date, c.dob) ?? -1) >= minSupervisorAge);
+    // Minutes a supervisor-age child is at home (before/after school, or all day).
+    const supervisorHome: DayInterval[] = [];
+    if (minSupervisorAge != null) {
+      for (const c of childInfo) {
+        if ((ageOn(date, c.dob) ?? -1) < minSupervisorAge) continue;
+        if (c.at) {
+          if (c.start > 0) supervisorHome.push({ startMinutes: 0, endMinutes: c.start });
+          if (c.end < 1440) supervisorHome.push({ startMinutes: c.end, endMinutes: 1440 });
+        } else {
+          supervisorHome.push({ startMinutes: 0, endMinutes: 1440 });
+        }
+      }
+    }
 
     const ownShift = shiftByKey.get(`${ownerId}|${date}`);
     let locked: OptimiserDay["locked"] = null;
@@ -194,7 +204,7 @@ export async function getMumWeekPlan(
       dadShift: other.shift,
       locked,
       schoolCover,
-      supervisorHomeAllowance,
+      supervisorHome,
     });
   }
 

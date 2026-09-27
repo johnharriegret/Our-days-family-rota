@@ -39,6 +39,14 @@ function formatMinutes(minutes: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+/** True if [g.start,g.end] lies entirely within the union of `intervals`. */
+function isWithin(g: DayInterval, intervals: DayInterval[]): boolean {
+  for (const iv of mergeIntervals(intervals)) {
+    if (g.startMinutes >= iv.startMinutes && g.endMinutes <= iv.endMinutes) return true;
+  }
+  return false;
+}
+
 /**
  * Decides whether a single calendar day is safely covered, needs the 3-hour
  * handover allowance, or needs childcare arranging.
@@ -47,21 +55,27 @@ function formatMinutes(minutes: number): string {
  * school-attendance window for that day (the calendar-aggregation layer builds
  * this from Dad's/Mum's resolved shifts + school hours before calling in).
  *
- * The spec's SAFE/COVERED/HANDOVER/CHILDCARE-NEEDED/SCHEDULE-CONFLICT wording
- * collapses here to three engine-level outcomes: SAFE (no gap at all), HANDOVER
- * (a gap exists but the 3-hour allowance covers it), CHILDCARE_NEEDED (a gap
- * exists that the allowance doesn't cover, whether because it's too long or
- * because the allowance doesn't apply that day). The UI layer (Phase 2) can
- * still choose different wording/severity on top of this.
+ * `supervisorHome` is the union of minutes a supervisor-age child (e.g. the
+ * 13-year-old) is at home and could supervise - typically the after-school
+ * hours on a school day, or the whole day when they're off school. A gap that
+ * falls entirely within that window (or on a weekend, if the rule allows) and
+ * is no longer than the allowance counts as a HANDOVER rather than a conflict.
+ * This is what lets a parent work a shift that ends a little after school pickup
+ * without it being flagged as "childcare needed".
+ *
+ * Outcomes: SAFE (no gap), HANDOVER (every gap is allowed), CHILDCARE_NEEDED
+ * (some gap is too long, or happens when nobody - adult or supervisor - is
+ * available).
  */
 export function childcareStatus(params: {
   date: string;
   coveredIntervals: DayInterval[];
-  oldestChildHome: boolean;
+  supervisorHome: DayInterval[];
   rule: ChildcareRuleSpec;
 }): ChildcareResult {
-  const { date, coveredIntervals, oldestChildHome, rule } = params;
+  const { date, coveredIntervals, supervisorHome, rule } = params;
   const gaps = uncoveredGaps(coveredIntervals);
+  const allowanceHours = Math.round((rule.maxUnsupervisedMinutes / 60) * 10) / 10;
 
   if (gaps.length === 0) {
     return {
@@ -74,32 +88,42 @@ export function childcareStatus(params: {
   }
 
   const totalUncovered = gaps.reduce((sum, g) => sum + (g.endMinutes - g.startMinutes), 0);
-  const worstGap = gaps.reduce((max, g) =>
-    g.endMinutes - g.startMinutes > max.endMinutes - max.startMinutes ? g : max,
-  );
-  const gapMinutes = worstGap.endMinutes - worstGap.startMinutes;
-  const allowanceApplies = (rule.appliesWeekends && isWeekend(date)) || oldestChildHome;
-  const gapWindow = `${formatMinutes(worstGap.startMinutes)}–${formatMinutes(worstGap.endMinutes)}`;
-  const allowanceHours = Math.round((rule.maxUnsupervisedMinutes / 60) * 10) / 10;
+  const weekendAllows = rule.appliesWeekends && isWeekend(date);
 
-  if (allowanceApplies && gapMinutes <= rule.maxUnsupervisedMinutes) {
+  // A gap is allowed if it's short enough AND either the weekend allowance
+  // applies or a supervisor-age child is home for the whole of it.
+  function gapAllowed(g: DayInterval): boolean {
+    const minutes = g.endMinutes - g.startMinutes;
+    if (minutes > rule.maxUnsupervisedMinutes) return false;
+    return weekendAllows || isWithin(g, supervisorHome);
+  }
+
+  const disallowed = gaps.filter((g) => !gapAllowed(g));
+
+  if (disallowed.length === 0) {
+    const worst = gaps.reduce((a, b) => (b.endMinutes - b.startMinutes > a.endMinutes - a.startMinutes ? b : a));
+    const win = `${formatMinutes(worst.startMinutes)}–${formatMinutes(worst.endMinutes)}`;
     return {
       status: "HANDOVER",
       uncoveredMinutes: totalUncovered,
-      gapStart: formatMinutes(worstGap.startMinutes),
-      gapEnd: formatMinutes(worstGap.endMinutes),
-      explanation: `Children are without an adult from ${gapWindow}, within your ${allowanceHours}-hour allowance.`,
+      gapStart: formatMinutes(worst.startMinutes),
+      gapEnd: formatMinutes(worst.endMinutes),
+      explanation: `Children are without an adult from ${win}, within your ${allowanceHours}-hour allowance.`,
     };
   }
 
-  const reason = allowanceApplies
-    ? `exceeds your ${allowanceHours}-hour allowance`
-    : "your current rule doesn't allow unsupervised time today";
+  const worst = disallowed.reduce((a, b) => (b.endMinutes - b.startMinutes > a.endMinutes - a.startMinutes ? b : a));
+  const gapMinutes = worst.endMinutes - worst.startMinutes;
+  const win = `${formatMinutes(worst.startMinutes)}–${formatMinutes(worst.endMinutes)}`;
+  const reason =
+    gapMinutes > rule.maxUnsupervisedMinutes
+      ? `exceeds your ${allowanceHours}-hour allowance`
+      : "your current rule doesn't allow unsupervised time then";
   return {
     status: "CHILDCARE_NEEDED",
     uncoveredMinutes: totalUncovered,
-    gapStart: formatMinutes(worstGap.startMinutes),
-    gapEnd: formatMinutes(worstGap.endMinutes),
-    explanation: `Both parents would be working from ${gapWindow}. This creates ${Math.round((gapMinutes / 60) * 10) / 10} hours without an adult at home, which ${reason}.`,
+    gapStart: formatMinutes(worst.startMinutes),
+    gapEnd: formatMinutes(worst.endMinutes),
+    explanation: `No adult is at home from ${win}. That is ${Math.round((gapMinutes / 60) * 10) / 10} hours without cover, which ${reason}.`,
   };
 }

@@ -15,7 +15,7 @@ function plainDay(date: string, over: Partial<OptimiserDay> = {}): OptimiserDay 
     dadShift: null,
     locked: null,
     schoolCover: null,
-    supervisorHomeAllowance: false,
+    supervisorHome: [],
     ...over,
   };
 }
@@ -134,6 +134,40 @@ test("maximises couple time off: works when the other parent works and kids are 
   assert.ok(res.best.days[1].option, "should work the day the other parent also works");
   assert.equal(res.best.days[0].option, null);
   assert.equal(res.best.days[2].option, null);
+});
+
+test("works a school-hours shift on the OTHER parent's working days to free up their days off", () => {
+  // Kids at school 08:45-15:15 every weekday; the 13yo is home before/after.
+  // A 09:00-16:00 shift ends 45 min after pickup, covered by the 13yo (handover).
+  const SCHOOL = { startMinutes: 525, endMinutes: 915 };
+  const SUP = [
+    { startMinutes: 0, endMinutes: 525 },
+    { startMinutes: 915, endMinutes: 1440 },
+  ];
+  const nineToFour = { id: "94", name: "9-4", startLocal: "09:00", endLocal: "16:00", paidMinutes: 420 };
+  // Dad works Mon/Tue/Wed, off Thu/Fri.
+  const dad = (working: boolean) => (working ? { startLocal: "06:00", endLocal: "18:00" } : null);
+  const days: OptimiserDay[] = [
+    plainDay("2026-09-21", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(true) }),
+    plainDay("2026-09-22", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(true) }),
+    plainDay("2026-09-23", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(true) }),
+    plainDay("2026-09-24", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(false) }),
+    plainDay("2026-09-25", { hasChildren: true, schoolCover: SCHOOL, supervisorHome: SUP, dadShift: dad(false) }),
+  ];
+  const res = planMumWeek({
+    days,
+    priorDadShift: null,
+    priorMumShift: null,
+    requiredMinutes: 1260, // three 9-4 shifts
+    shiftOptions: [nineToFour],
+    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.childcareConflicts, 0);
+  // Both of the other parent's days off (Thu/Fri) stay free for the couple.
+  assert.equal(res.best.metrics.coupleDaytimeOff, 2);
+  assert.equal(res.best.days[3].option, null); // Thu off
+  assert.equal(res.best.days[4].option, null); // Fri off
 });
 
 test("is deterministic - same input, same plan", () => {

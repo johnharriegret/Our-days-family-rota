@@ -31,8 +31,8 @@ export type OptimiserDay = {
   locked: { paidMinutes: number; shift: ShiftInterval | null; label?: string } | null;
   /** interval during which EVERY child is at school (null if any child is home). */
   schoolCover: DayInterval | null;
-  /** a supervisor-age child is home (not at school) today - enables the allowance. */
-  supervisorHomeAllowance: boolean;
+  /** minutes a supervisor-age child is home (before/after school, or all day). */
+  supervisorHome: DayInterval[];
 };
 
 export type OptimiserInput = {
@@ -97,7 +97,7 @@ function dayChildcare(
   const result = childcareStatus({
     date: day.date,
     coveredIntervals: covered,
-    oldestChildHome: day.supervisorHomeAllowance,
+    supervisorHome: day.supervisorHome,
     rule: { ...rule, minSupervisorAge: null },
   });
   return result.status;

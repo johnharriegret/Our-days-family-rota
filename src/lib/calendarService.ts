@@ -279,19 +279,27 @@ export async function getCalendarRange(
       if (end > start) covered.push({ startMinutes: start, endMinutes: end });
     }
 
+    // Minutes a supervisor-age child is at home (and could supervise): the whole
+    // day when they're off school, or before/after school on a school day.
     const minSupervisorAge = childcareRule?.minSupervisorAge ?? null;
-    const oldestChildHome =
-      minSupervisorAge != null &&
-      childMembers.some((c, i) => {
-        if (childSchool[i].at) return false;
+    const supervisorHome: DayInterval[] = [];
+    if (minSupervisorAge != null) {
+      childMembers.forEach((c, i) => {
         const age = ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null);
-        return age != null && age >= minSupervisorAge;
+        if (age == null || age < minSupervisorAge) return;
+        if (childSchool[i].at) {
+          if (childSchool[i].start > 0) supervisorHome.push({ startMinutes: 0, endMinutes: childSchool[i].start });
+          if (childSchool[i].end < 1440) supervisorHome.push({ startMinutes: childSchool[i].end, endMinutes: 1440 });
+        } else {
+          supervisorHome.push({ startMinutes: 0, endMinutes: 1440 });
+        }
       });
+    }
 
     const result = childcareStatus({
       date,
       coveredIntervals: covered,
-      oldestChildHome,
+      supervisorHome,
       rule: {
         maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? 180,
         appliesWeekends: childcareRule?.appliesWeekends ?? true,
