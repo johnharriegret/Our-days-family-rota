@@ -7,7 +7,6 @@ import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
 import { MemberAvatar } from "@/components/memberIcon";
 import { resolveQuickShiftConfig } from "@/lib/quickShift";
-import { DEFAULT_TOGETHER_COLOR } from "@/lib/constants";
 import { initials } from "@/lib/initials";
 import type { CalendarDayView, FamilyMember } from "@/lib/clientTypes";
 
@@ -124,7 +123,6 @@ export default function MonthPage() {
   // --- Quick fill (paint) tool -------------------------------------------
   const [quickFillOn, setQuickFillOn] = useState(false);
   const [parents, setParents] = useState<FamilyMember[]>([]);
-  const [togetherColor, setTogetherColor] = useState(DEFAULT_TOGETHER_COLOR);
   const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const [selectedAction, setSelectedAction] = useState<QuickFillAction | null>(null);
   const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction }>>(new Map());
@@ -137,7 +135,6 @@ export default function MonthPage() {
     apiFetch<{ members: FamilyMember[] }>("/api/family-members").then((d) =>
       setParents(d.members.filter((m) => m.kind === "PARENT")),
     );
-    apiFetch<{ togetherColor: string }>("/api/settings/appearance").then((d) => setTogetherColor(d.togetherColor));
   }, []);
 
   function startQuickFill() {
@@ -311,7 +308,6 @@ export default function MonthPage() {
                 key={day.date}
                 className={`month-cell${hasConflict ? " conflict" : ""}${holidayClass}`}
                 style={{
-                  ...(day.bothParentsOff && !hasConflict ? { background: `${togetherColor}33` } : undefined),
                   ...(isToday ? { outline: "2px solid var(--accent)" } : undefined),
                   ...(mark ? { boxShadow: `inset 0 0 0 3px ${pendingColor(mark)}` } : undefined),
                   cursor: "pointer",
@@ -323,9 +319,9 @@ export default function MonthPage() {
                 <div className="parent-lanes">
                   {[0, 1].map((slot) => {
                     const parent = parentRows.find((member) => parentSlot(member.name) === slot);
-                    return parent ? <span key={parent.memberId} className={`shift-pill${parent.isOff ? " off" : ""}`} style={parent.isOff ? undefined : { background: parent.displayColor ?? `var(--${parent.colorToken})` }}>
-                      {initials(parent.name)}{parent.isOff ? " · off" : ""}
-                    </span> : <span className="shift-pill off" key={slot}>{slot === 0 ? "HG" : "JG"} · —</span>;
+                    return parent && !parent.isOff ? <span key={parent.memberId} className="shift-pill" style={{ background: parent.displayColor ?? `var(--${parent.colorToken})` }}>
+                      {initials(parent.name)}
+                    </span> : <span className="parent-lane-empty" key={slot} />;
                   })}
                 </div>
                 <div className="child-marker-row" aria-label="School status">
@@ -355,10 +351,6 @@ export default function MonthPage() {
       </div>
       <p style={{ color: "var(--muted)", fontSize: 12.5, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 4 }}>
         <span>Tap a day to see who&apos;s doing what or remove a saved shift.</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: togetherColor, display: "inline-block", flexShrink: 0 }} />
-          = both parents off
-        </span>
         <span>· red dot = childcare needed.</span>
       </p>
 
