@@ -53,6 +53,10 @@ export type PlanDay = {
   locked: boolean;
   /** display name for a locked day (e.g. "Long Day" or "Off"). */
   lockedLabel: string | null;
+  /** true once the other parent's status for this day is actually known. */
+  dadKnown: boolean;
+  /** the other parent's own (already fixed, not being planned) shift that day. */
+  dadShift: ShiftInterval | null;
 };
 
 export type PlanMetrics = {
@@ -190,6 +194,8 @@ function evaluate(
       option: locked ? null : option,
       locked: Boolean(locked),
       lockedLabel: locked ? locked.label ?? (locked.shift ? "Shift" : "Off") : null,
+      dadKnown: day.dadKnown,
+      dadShift: day.dadShift,
     };
   });
 

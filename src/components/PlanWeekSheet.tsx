@@ -3,9 +3,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, Lock, Sparkles, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
+import { initials } from "@/lib/initials";
+import { classifyShiftKind } from "@/lib/quickShift";
 
 type PlanOption = { id: string; name: string; startLocal: string; endLocal: string; paidMinutes: number };
-type PlanDay = { date: string; option: PlanOption | null; locked: boolean; lockedLabel: string | null };
+type ShiftInterval = { startLocal: string; endLocal: string };
+type PlanDay = {
+  date: string;
+  option: PlanOption | null;
+  locked: boolean;
+  lockedLabel: string | null;
+  /** the other parent's own, already-fixed shift that day - not being planned here. */
+  dadKnown: boolean;
+  dadShift: ShiftInterval | null;
+};
 type PlanMetrics = {
   totalPaidMinutes: number;
   requiredMinutes: number;
@@ -23,6 +34,7 @@ type PlanResponse = {
   message?: string;
   ownerId: string;
   ownerName: string;
+  otherParentName: string | null;
   weekStart: string;
   requiredMinutes: number | null;
 };
@@ -37,6 +49,13 @@ function weekLabel(date: string): string {
   const end = new Date(Date.parse(`${date}T12:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
   const f = (d: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(`${d}T12:00:00Z`));
   return `${f(date)} – ${f(end)}`;
+}
+
+/** What the other parent is actually doing that day - null when it isn't known yet. */
+function dadLabel(day: PlanDay): string | null {
+  if (!day.dadKnown) return null;
+  if (!day.dadShift) return "Off";
+  return classifyShiftKind(day.dadShift.startLocal, day.dadShift.endLocal) === "NIGHT" ? "Night" : "Day";
 }
 
 function Metrics({ m }: { m: PlanMetrics }) {
@@ -61,29 +80,52 @@ function Metrics({ m }: { m: PlanMetrics }) {
 function PlanCard({
   plan,
   label,
+  otherParentName,
   onApply,
   busy,
   applied,
 }: {
   plan: WeekPlan;
   label: string;
+  /** shown as initials opposite the title, and alongside each day, so the
+   * other parent can see their own already-fixed shift without leaving this
+   * sheet to decide whether the suggested plan below works for them too. */
+  otherParentName: string | null;
   onApply: () => void;
   busy: boolean;
   applied?: boolean;
 }) {
+  const otherInitials = otherParentName ? initials(otherParentName) : null;
   return (
     <div className="plan-card">
-      <div className="plan-card-title">{label}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <div className="plan-card-title">{label}</div>
+        {otherInitials && (
+          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)" }} title={`${otherParentName}'s own shift`}>
+            {otherInitials}
+          </span>
+        )}
+      </div>
       <div className="plan-rows">
-        {plan.days.map((d) => (
-          <div className="plan-row" key={d.date}>
-            <span className="plan-row-day">{shortDay(d.date)}</span>
-            <span className={d.option || (d.locked && d.lockedLabel && d.lockedLabel !== "Off") ? "plan-row-shift" : "plan-row-off"}>
-              {d.locked ? d.lockedLabel ?? "Off" : d.option ? d.option.name : "Off"}
-              {d.locked && <Lock size={11} style={{ marginLeft: 5, verticalAlign: "middle" }} />}
-            </span>
-          </div>
-        ))}
+        {plan.days.map((d) => {
+          const dad = dadLabel(d);
+          return (
+            <div className="plan-row" key={d.date}>
+              <span className="plan-row-day">{shortDay(d.date)}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {dad && (
+                  <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--muted)" }}>
+                    {otherInitials} {dad}
+                  </span>
+                )}
+                <span className={d.option || (d.locked && d.lockedLabel && d.lockedLabel !== "Off") ? "plan-row-shift" : "plan-row-off"}>
+                  {d.locked ? d.lockedLabel ?? "Off" : d.option ? d.option.name : "Off"}
+                  {d.locked && <Lock size={11} style={{ marginLeft: 5, verticalAlign: "middle" }} />}
+                </span>
+              </span>
+            </div>
+          );
+        })}
       </div>
       <Metrics m={plan.metrics} />
       {applied ? (
@@ -234,6 +276,7 @@ export function PlanWeekSheet({
                   <PlanCard
                     plan={data.best}
                     label={isMonth ? "Best fit" : "Best fit"}
+                    otherParentName={data.otherParentName}
                     onApply={() => applyOne(data.best!, data.weekStart)}
                     busy={busy}
                     applied={appliedWeeks.has(data.weekStart)}
@@ -249,6 +292,7 @@ export function PlanWeekSheet({
                         key={i}
                         plan={alt}
                         label={`Alternative ${i + 1}`}
+                        otherParentName={data.otherParentName}
                         onApply={() => applyOne(alt, data.weekStart)}
                         busy={busy}
                         applied={appliedWeeks.has(data.weekStart)}

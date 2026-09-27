@@ -8,6 +8,7 @@ import { PlanWeekSheet } from "@/components/PlanWeekSheet";
 import { MemberAvatar } from "@/components/memberIcon";
 import { resolveQuickShiftConfig } from "@/lib/quickShift";
 import { DEFAULT_TOGETHER_COLOR } from "@/lib/constants";
+import { initials } from "@/lib/initials";
 import type { CalendarDayView, FamilyMember } from "@/lib/clientTypes";
 
 type QuickFillAction = "DAY" | "NIGHT" | "OFF" | "HOLIDAY";
@@ -63,15 +64,6 @@ function addDays(date: string, n: number): string {
 
 function weekdayIndexMondayFirst(date: string): number {
   return (new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7;
-}
-
-// Two-letter initials (first name + last name) so a shift pill is readable
-// at a glance without needing to tap/hold - e.g. "Harry Green" -> "HG".
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function mondayOf(date: string): string {

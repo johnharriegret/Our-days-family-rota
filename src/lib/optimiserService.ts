@@ -27,6 +27,8 @@ function ageOn(date: string, dob: string | null): number | null {
 export type MumWeekPlan = OptimiserResult & {
   ownerId: string;
   ownerName: string;
+  /** the other parent's name, for labelling their own shift shown alongside the plan - null if there isn't one. */
+  otherParentName: string | null;
   weekStart: string;
   requiredMinutes: number | null;
 };
@@ -55,7 +57,7 @@ export async function getMumWeekPlan(
     where: { id: ownerId, householdId, kind: "PARENT" },
   });
   if (!owner) {
-    return { best: null, alternatives: [], message: "That person isn't a parent in this household.", ownerId, ownerName: "", weekStart, requiredMinutes: null };
+    return { best: null, alternatives: [], message: "That person isn't a parent in this household.", ownerId, ownerName: "", otherParentName: null, weekStart, requiredMinutes: null };
   }
 
   const weekEnd = addDays(weekStart, 6);
@@ -250,6 +252,7 @@ export async function getMumWeekPlan(
       message: `Set ${owner.name}'s weekly hours requirement in Settings first, so a plan can hit it exactly.`,
       ownerId,
       ownerName: owner.name,
+      otherParentName: otherParent?.name ?? null,
       weekStart,
       requiredMinutes: null,
     };
@@ -267,7 +270,14 @@ export async function getMumWeekPlan(
     },
   });
 
-  return { ...result, ownerId, ownerName: owner.name, weekStart, requiredMinutes: owner.requiredWeeklyMinutes };
+  return {
+    ...result,
+    ownerId,
+    ownerName: owner.name,
+    otherParentName: otherParent?.name ?? null,
+    weekStart,
+    requiredMinutes: owner.requiredWeeklyMinutes,
+  };
 }
 
 /**
