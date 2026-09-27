@@ -292,12 +292,12 @@ a { color: inherit; text-decoration: none; }
 }
 .week-day-name { font-weight: 800; font-size: 14px; }
 .week-day-date { color: var(--muted); font-size: 13px; }
+/* color/background are set inline from the household's customisable
+   "days off together" colour (Settings > Appearance). */
 .together-badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--mum);
-  background: var(--mum-soft);
   padding: 4px 9px;
   border-radius: 999px;
   font-weight: 700;
@@ -411,7 +411,6 @@ a { color: inherit; text-decoration: none; }
   gap: 3px;
   position: relative;
 }
-.month-cell.together { background: var(--family-soft); }
 .month-cell-daynum { line-height: 1; }
 /* Shift pills: coloured, initialled blocks - deliberately big enough to read
    at a glance without tapping/holding, per real user feedback that the old

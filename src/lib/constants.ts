@@ -17,3 +17,6 @@ export const DEFAULT_CHILDCARE_RULE = {
   appliesWeekends: true,
   minSupervisorAge: 13,
 };
+
+/** Highlight colour for a day both parents are off, until customised in Settings. */
+export const DEFAULT_TOGETHER_COLOR = "#f2c94c";

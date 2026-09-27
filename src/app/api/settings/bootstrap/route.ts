@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { withApi } from "@/lib/api";
+import { DEFAULT_TOGETHER_COLOR } from "@/lib/constants";
+
+type AppearanceData = { togetherColor?: string };
 
 /**
  * Everything the Settings page needs for its first render, in one request.
@@ -18,7 +21,7 @@ export async function GET() {
     const session = await requireSession();
     const householdId = session.householdId;
 
-    const [members, schools, childcareRule] = await Promise.all([
+    const [members, schools, childcareRule, appearance] = await Promise.all([
       prisma.familyMember.findMany({
         where: { householdId, archived: false },
         orderBy: { kind: "asc" },
@@ -32,7 +35,9 @@ export async function GET() {
         where: { householdId },
         orderBy: { effectiveFrom: "desc" },
       }),
+      prisma.familySettings.findUnique({ where: { householdId } }),
     ]);
+    const togetherColor = ((appearance?.data ?? {}) as AppearanceData).togetherColor ?? DEFAULT_TOGETHER_COLOR;
 
     const parentIds = members.filter((m) => m.kind === "PARENT").map((m) => m.id);
 
@@ -59,6 +64,6 @@ export async function GET() {
       (shiftTypesByOwnerId[t.ownerId] ??= []).push(t);
     }
 
-    return NextResponse.json({ members, schools, childcareRule, patternsByOwnerId, shiftTypesByOwnerId });
+    return NextResponse.json({ members, schools, childcareRule, patternsByOwnerId, shiftTypesByOwnerId, togetherColor });
   });
 }

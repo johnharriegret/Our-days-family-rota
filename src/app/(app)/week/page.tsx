@@ -7,6 +7,7 @@ import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
 import { ChildcareBanner } from "@/components/ChildcareBanner";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
+import { DEFAULT_TOGETHER_COLOR } from "@/lib/constants";
 import type { CalendarDayView } from "@/lib/clientTypes";
 
 function todayStr(): string {
@@ -42,6 +43,7 @@ export default function WeekPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showPlan, setShowPlan] = useState(false);
+  const [togetherColor, setTogetherColor] = useState(DEFAULT_TOGETHER_COLOR);
 
   const load = useCallback(async () => {
     setError(null);
@@ -60,6 +62,10 @@ export default function WeekPage() {
     load();
   }, [load]);
   useCalendarChangedListener(load);
+
+  useEffect(() => {
+    apiFetch<{ togetherColor: string }>("/api/settings/appearance").then((d) => setTogetherColor(d.togetherColor));
+  }, []);
 
   return (
     <div className="page-body">
@@ -118,7 +124,10 @@ export default function WeekPage() {
                 </div>
               ))}
               {day.bothParentsOff && (
-                <div className="together-badge" style={{ marginTop: 8 }}>
+                <div
+                  className="together-badge"
+                  style={{ marginTop: 8, color: togetherColor, background: `${togetherColor}22` }}
+                >
                   <Heart size={13} /> Both off
                 </div>
               )}

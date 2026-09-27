@@ -7,6 +7,7 @@ import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
 import { MemberAvatar } from "@/components/memberIcon";
 import { resolveQuickShiftConfig } from "@/lib/quickShift";
+import { DEFAULT_TOGETHER_COLOR } from "@/lib/constants";
 import type { CalendarDayView, FamilyMember } from "@/lib/clientTypes";
 
 type QuickFillAction = "DAY" | "NIGHT" | "OFF" | "HOLIDAY";
@@ -103,6 +104,7 @@ export default function MonthPage() {
   // --- Quick fill (paint) tool -------------------------------------------
   const [quickFillOn, setQuickFillOn] = useState(false);
   const [parents, setParents] = useState<FamilyMember[]>([]);
+  const [togetherColor, setTogetherColor] = useState(DEFAULT_TOGETHER_COLOR);
   const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const [selectedAction, setSelectedAction] = useState<QuickFillAction | null>(null);
   const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction }>>(new Map());
@@ -113,6 +115,7 @@ export default function MonthPage() {
     apiFetch<{ members: FamilyMember[] }>("/api/family-members").then((d) =>
       setParents(d.members.filter((m) => m.kind === "PARENT")),
     );
+    apiFetch<{ togetherColor: string }>("/api/settings/appearance").then((d) => setTogetherColor(d.togetherColor));
   }, []);
 
   function startQuickFill() {
@@ -255,8 +258,9 @@ export default function MonthPage() {
             return (
               <div
                 key={day.date}
-                className={`month-cell${day.bothParentsOff ? " together" : ""}${hasConflict ? " conflict" : ""}`}
+                className={`month-cell${hasConflict ? " conflict" : ""}`}
                 style={{
+                  ...(day.bothParentsOff ? { background: `${togetherColor}33` } : undefined),
                   ...(isToday ? { outline: "2px solid var(--accent)" } : undefined),
                   ...(mark ? { boxShadow: `inset 0 0 0 3px ${pendingColor(mark)}` } : undefined),
                   ...(canPaint ? { cursor: "pointer" } : undefined),
@@ -296,8 +300,13 @@ export default function MonthPage() {
           })}
         </div>
       </div>
-      <p style={{ color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
-        Tap and hold a day to see who&apos;s doing what. Pink = both parents off · red dot = childcare needed.
+      <p style={{ color: "var(--muted)", fontSize: 12.5, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 4 }}>
+        <span>Tap and hold a day to see who&apos;s doing what.</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: togetherColor, display: "inline-block", flexShrink: 0 }} />
+          = both parents off
+        </span>
+        <span>· red dot = childcare needed.</span>
       </p>
 
       {/* Quick-fill (paint) tool: pick a person, pick Days/Nights/Off/Holiday,

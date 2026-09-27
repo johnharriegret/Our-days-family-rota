@@ -7,6 +7,7 @@ import { PatternEditorSection } from "@/components/settings/PatternEditorSection
 import { ShiftTypesSection } from "@/components/settings/ShiftTypesSection";
 import { SchoolsSection, type SchoolWithTerms } from "@/components/settings/SchoolsSection";
 import { ChildcareRuleSection, type ChildcareRule } from "@/components/settings/ChildcareRuleSection";
+import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import type { FamilyMember, ShiftType } from "@/lib/clientTypes";
 
 type Pattern = { anchor: string; blocks: { kind: string; count: number; startLocal: string | null; endLocal: string | null }[] };
@@ -17,6 +18,7 @@ type Bootstrap = {
   childcareRule: ChildcareRule | null;
   patternsByOwnerId: Record<string, Pattern>;
   shiftTypesByOwnerId: Record<string, ShiftType[]>;
+  togetherColor: string;
 };
 
 // Everything Settings needs, in one request - see the route's own comment for
@@ -48,6 +50,7 @@ export default function SettingsPage() {
       <ShiftTypesSection parents={parents} initialShiftTypesByOwnerId={data.shiftTypesByOwnerId} />
       <SchoolsSection initialSchools={data.schools} onChanged={load} />
       <ChildcareRuleSection initialRule={data.childcareRule} onChanged={load} />
+      <AppearanceSection initialTogetherColor={data.togetherColor} onChanged={load} />
     </div>
   );
 }
