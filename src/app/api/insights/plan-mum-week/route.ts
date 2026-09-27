@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, requireSession } from "@/lib/session";
 import { apiError, withApi } from "@/lib/api";
-import { applyMumWeekPlan, getMumMonthPlan, getMumWeekPlan } from "@/lib/optimiserService";
+import { applyMumWeekPlan, getMumMonthPlan, getMumWeekPlan, validateAssignments } from "@/lib/optimiserService";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -41,17 +41,23 @@ export async function POST(request: Request) {
   return withApi(async () => {
     const session = await requireRole("ADMIN", "PARENT");
     const body = await request.json();
-    const { ownerId, assignments, allowConflicts } = body as {
+    const { ownerId, assignments, allowConflicts, preview } = body as {
       ownerId?: string;
       assignments?: { date: string; shiftTypeId: string | null }[];
       /** apply a plan that has a known childcare conflict - a deliberate override. */
       allowConflicts?: boolean;
+      /** validate a review-desk edit without changing the calendar. */
+      preview?: boolean;
     };
     if (!ownerId || !Array.isArray(assignments)) {
       return apiError("ownerId and assignments are required", 422);
     }
     for (const a of assignments) {
       if (!a || !DATE_RE.test(a.date)) return apiError("each assignment needs a valid date", 422);
+    }
+    if (preview === true) {
+      const conflicts = await validateAssignments(session.householdId, ownerId, assignments);
+      return NextResponse.json({ conflicts });
     }
     // Whatever the browser sends is re-checked against the household's
     // childcare rules here, so the schedule that gets saved is a schedule that

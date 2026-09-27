@@ -52,6 +52,8 @@ function homeLabelFor(
 
 export type MemberDayEntry = {
   memberId: string;
+  /** Present only for a manually saved shift/off/leave row; patterns have no row to delete. */
+  shiftId: string | null;
   name: string;
   colorToken: string;
   icon: string;
@@ -208,6 +210,7 @@ export async function getCalendarRange(
     endLocal: string | null;
     isLeave: boolean;
     locked: boolean;
+    shiftId: string | null;
     source: "PATTERN" | "MANUAL" | "NONE";
     label: string;
   };
@@ -230,6 +233,7 @@ export async function getCalendarRange(
         endLocal: working ? endLocal : null,
         isLeave,
         locked: manual.locked,
+        shiftId: manual.id,
         source: manual.source === "PATTERN_OVERRIDE" ? "PATTERN" : "MANUAL",
         label: type?.name ?? (working ? "Custom shift" : isLeave ? "Annual leave" : "Off"),
       };
@@ -245,6 +249,7 @@ export async function getCalendarRange(
         endLocal: working ? resolved.endLocal : null,
         isLeave: false,
         locked: false,
+        shiftId: null,
         source: "PATTERN",
         label: working ? `${resolved.kind} ${resolved.startLocal}–${resolved.endLocal}` : "Off",
       };
@@ -257,6 +262,7 @@ export async function getCalendarRange(
         endLocal: null,
         isLeave: false,
         locked: false,
+        shiftId: null,
         source: "MANUAL",
         label: "Off",
       };
@@ -268,6 +274,7 @@ export async function getCalendarRange(
       endLocal: null,
       isLeave: false,
       locked: false,
+      shiftId: null,
       source: "NONE",
       label: "Not set up yet",
     };
@@ -352,6 +359,7 @@ export async function getCalendarRange(
         const homeLabel = homeLabelFor(reason, Boolean(member.school), hasTerms);
         return {
           memberId: member.id,
+          shiftId: null,
           name: member.name,
           colorToken: member.colorToken,
           icon: member.icon,
@@ -376,6 +384,7 @@ export async function getCalendarRange(
           : null;
       return {
         memberId: member.id,
+        shiftId: pd.shiftId,
         name: member.name,
         colorToken: member.colorToken,
         icon: member.icon,

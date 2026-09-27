@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Brush, Check, ChevronLeft, ChevronRight, Sparkles, X } from "lucide-react";
+import { Brush, Check, ChevronLeft, ChevronRight, Sparkles, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
@@ -117,6 +117,8 @@ export default function MonthPage() {
   const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [quickFillError, setQuickFillError] = useState<string | null>(null);
+  const [editingDay, setEditingDay] = useState<CalendarDayView | null>(null);
+  const [deletingShiftId, setDeletingShiftId] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<{ members: FamilyMember[] }>("/api/family-members").then((d) =>
@@ -190,6 +192,20 @@ export default function MonthPage() {
       setQuickFillError(err instanceof Error ? err.message : "Couldn't save some of those changes");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteSavedShift(shiftId: string) {
+    if (!confirm("Remove this saved shift? You can then paint a new one or let the optimiser suggest a replacement.")) return;
+    setDeletingShiftId(shiftId);
+    try {
+      await apiFetch(`/api/shifts/${shiftId}`, { method: "DELETE" });
+      setEditingDay(null);
+      emitCalendarChanged();
+    } catch (err) {
+      setQuickFillError(err instanceof Error ? err.message : "Couldn't remove that shift");
+    } finally {
+      setDeletingShiftId(null);
     }
   }
   // -------------------------------------------------------------------------
@@ -271,6 +287,12 @@ export default function MonthPage() {
             if (hasConflict && day.childcare) titleLines.push(`⚠ ${day.childcare.explanation}`);
             const mark = pending.get(day.date);
             const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction);
+            const children = day.members.filter((m) => m.memberKind === "CHILD");
+            const schoolBadge = children.length === 0
+              ? null
+              : children.every((child) => child.label.startsWith("School"))
+                ? "School"
+                : children.map((child) => child.label.replace(/^Home ·?\s*/, "")).find(Boolean) ?? "Home";
             return (
               <div
                 key={day.date}
@@ -282,7 +304,7 @@ export default function MonthPage() {
                   ...(canPaint ? { cursor: "pointer" } : undefined),
                 }}
                 title={titleLines.join("\n")}
-                onClick={canPaint ? () => tapDate(day.date) : undefined}
+                onClick={canPaint ? () => tapDate(day.date) : () => setEditingDay(day)}
               >
                 <span className="month-cell-daynum">{dayNum}</span>
                 <div className="shift-pills">
@@ -298,6 +320,7 @@ export default function MonthPage() {
                       </span>
                     ))}
                 </div>
+                {schoolBadge && <span className={`school-badge${schoolBadge === "School" ? " at-school" : ""}`}>{schoolBadge}</span>}
                 {mark && (
                   <span
                     style={{
@@ -317,13 +340,37 @@ export default function MonthPage() {
         </div>
       </div>
       <p style={{ color: "var(--muted)", fontSize: 12.5, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 4 }}>
-        <span>Tap and hold a day to see who&apos;s doing what.</span>
+        <span>Tap a day to see who&apos;s doing what or remove a saved shift.</span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: togetherColor, display: "inline-block", flexShrink: 0 }} />
           = both parents off
         </span>
         <span>· red dot = childcare needed.</span>
       </p>
+
+      {editingDay && (
+        <div className="card" style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <strong>{new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${editingDay.date}T12:00:00Z`))}</strong>
+            <button className="btn btn-ghost" onClick={() => setEditingDay(null)} aria-label="Close day editor" style={{ padding: 6, minHeight: "auto" }}><X size={18} /></button>
+          </div>
+          {editingDay.members.filter((member) => member.memberKind === "PARENT").map((member) => {
+            const shiftId = member.shiftId;
+            return <div className="row" key={member.memberId}>
+              <div style={{ flex: 1 }}>
+                <div className="row-title">{member.name} · {member.label}</div>
+                <div className="row-sub">{member.source === "PATTERN" ? "Repeating rota — edit the pattern in Settings" : member.shiftId ? "Saved shift — safe to remove" : "No saved shift"}</div>
+              </div>
+              {shiftId && !member.locked && (
+                <button className="btn btn-ghost" disabled={deletingShiftId === shiftId} onClick={() => deleteSavedShift(shiftId)} aria-label={`Remove ${member.name}'s saved shift`} style={{ color: "var(--bad)", padding: 8, minHeight: "auto" }}>
+                  <Trash2 size={17} />
+                </button>
+              )}
+            </div>;
+          })}
+          {editingDay.members.filter((member) => member.memberKind === "CHILD").map((member) => <div className="row-sub" key={member.memberId}>{member.name}: {member.label}</div>)}
+        </div>
+      )}
 
       {/* Quick-fill (paint) tool: pick a person, pick Days/Nights/Off/Holiday,
           then tap dates above to mark them - tap again to undo - then Save. */}

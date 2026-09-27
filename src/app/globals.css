@@ -448,6 +448,20 @@ a { color: inherit; text-decoration: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.school-badge {
+  max-width: calc(100% - 8px);
+  border-radius: 999px;
+  padding: 1px 5px;
+  background: var(--child2-soft);
+  color: #9a691a;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.school-badge.at-school { background: var(--child1-soft); color: var(--child1); }
 /* The whole day card turns red when the children would be left without cover. */
 .month-cell.conflict {
   background: var(--bad);
@@ -469,4 +483,22 @@ a { color: inherit; text-decoration: none; }
 }
 .plan-conflicts li {
   margin: 0;
+}
+
+/* Review-desk planner: suggestions remain visible while the family can make
+   their own final decisions. On a phone the live preview simply follows the
+   list, rather than forcing a tiny unusable two-column layout. */
+.planner-workspace { display: grid; gap: 14px; }
+.planner-muted { color: var(--muted); font-size: 12.5px; line-height: 1.4; margin: 7px 0 12px; }
+.review-days { display: grid; gap: 7px; }
+.review-day { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 1.35fr); gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.review-day > div { min-width: 0; display: grid; gap: 2px; }
+.review-day strong { font-size: 13px; }
+.review-day span { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-day select { min-width: 0; font-size: 12px; padding: 7px; }
+.review-locked { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; font-weight: 700; font-size: 12px; }
+@media (min-width: 880px) {
+  .sheet { max-width: 1100px; }
+  .planner-workspace { grid-template-columns: minmax(0, 1.25fr) minmax(330px, .75fr); align-items: start; }
+  .planner-suggestions { min-width: 0; }
 }

@@ -31,6 +31,7 @@ export type ShiftType = {
 
 export type MemberDayEntry = {
   memberId: string;
+  shiftId: string | null;
   name: string;
   colorToken: string;
   icon: string;
