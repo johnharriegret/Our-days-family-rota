@@ -98,10 +98,10 @@ function PlanCard({
   const otherInitials = otherParentName ? initials(otherParentName) : null;
   return (
     <div className="plan-card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+      <div className="plan-card-header">
         <div className="plan-card-title">{label}</div>
         {otherInitials && (
-          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)" }} title={`${otherParentName}'s own shift`}>
+          <span className="plan-col-head" title={`${otherParentName}'s own shift`}>
             {otherInitials}
           </span>
         )}
@@ -112,17 +112,11 @@ function PlanCard({
           return (
             <div className="plan-row" key={d.date}>
               <span className="plan-row-day">{shortDay(d.date)}</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {dad && (
-                  <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--muted)" }}>
-                    {otherInitials} {dad}
-                  </span>
-                )}
-                <span className={d.option || (d.locked && d.lockedLabel && d.lockedLabel !== "Off") ? "plan-row-shift" : "plan-row-off"}>
-                  {d.locked ? d.lockedLabel ?? "Off" : d.option ? d.option.name : "Off"}
-                  {d.locked && <Lock size={11} style={{ marginLeft: 5, verticalAlign: "middle" }} />}
-                </span>
+              <span className={d.option || (d.locked && d.lockedLabel && d.lockedLabel !== "Off") ? "plan-row-shift" : "plan-row-off"}>
+                {d.locked ? d.lockedLabel ?? "Off" : d.option ? d.option.name : "Off"}
+                {d.locked && <Lock size={11} style={{ marginLeft: 5, verticalAlign: "middle" }} />}
               </span>
+              <span className="plan-row-dad">{dad ?? ""}</span>
             </div>
           );
         })}
