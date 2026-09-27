@@ -1,8 +1,11 @@
 # Our Days — Handoff / Takeover Brief
 
-Last updated: 2026-09-27 (day of first deploy). Read this fully before making
-changes — it's the "pick this project up from zero" document, same idea as
-the sibling `siteroster` project's own `HANDOFF.md`.
+Last updated: 2026-09-27, evening (Session 2, same day as first deploy). Read
+this fully before making changes — it's the "pick this project up from zero"
+document, same idea as the sibling `siteroster` project's own `HANDOFF.md`.
+**Read §9 first if you're picking this up fresh** — it covers everything a
+second session did the same day as first deploy, including a production
+incident, and is more current than §0-§8 in places (noted inline where so).
 
 ---
 
@@ -31,6 +34,7 @@ Today/Week/Month calendar, days-off-together — is built, tested, and live.
 | Supabase | Postgres connected via the Vercel Supabase integration on the `gretresidencerota` project (env vars `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` / `SUPABASE_URL` etc. — see the project's Vercel integration settings for the actual Supabase dashboard link; not recorded here since this session never had a reason to open it directly). |
 | Admin/setup | First-run `/setup` page, gated by the `SETUP_TOKEN` env var. **Current value was reset during this session** (the original was unrecoverable — see §9 gotcha #2) to `a5d4dd84ed7715e235d6717b37cc542be4f2ecce65b9ff0a`. Once the first admin account is created, `/setup` locks itself (409s) and this token stops mattering — the founder should still treat it as spent/rotate it as a habit rather than assume it's still meaningful. |
 | Session secret | `SESSION_SECRET` — already set on Vercel, never read back this session (same write-only reasoning as the setup token). |
+| Anthropic API key | `ANTHROPIC_API_KEY` — **not set as of end of Session 2**. Powers the photo/PDF school-calendar importer (§9.4); everything else works without it. The founder said in Session 2 they'd "found a way to organize it" themselves — don't chase adding it unless asked. Optional `ANTHROPIC_MODEL` env var overrides the model (defaults to `claude-sonnet-5` in `src/lib/schoolVisionImport.ts`). |
 
 ## 2. What preceded this repo
 
@@ -80,7 +84,12 @@ was reusable, so this repo is a clean rebuild, not a port.
 - Plain CSS (`src/app/globals.css`), no component library — deliberate, per
   the founder's "don't over-engineer the UI" instruction.
 
-## 4. Current live state (as of first deploy, 2026-09-27)
+## 4. Current live state (STALE — see §9 for what's actually true as of Session 2)
+
+This section describes first-deploy state only. Short version of what changed:
+the household is no longer empty (§9.6), the childcare engine is wired into
+the UI (§9.1), and a Mum shift optimiser + school-calendar importer were built
+(§9.2-9.4) — all ahead of the `TODO.md` phase schedule below. Read §9.
 
 - Phase 1 fully deployed and building/passing tests/lint at time of deploy.
 - **No family data exists yet** — the database has zero rows until someone
@@ -94,11 +103,14 @@ was reusable, so this repo is a clean rebuild, not a port.
 
 ## 5. Genuinely open items / TODO
 
-See `TODO.md` in the repo for the full Phase 2-5 breakdown (Mum's shift
-optimiser, the annual-leave/holiday-bridging finder, the Jarvis REST + MCP
-API, API keys, PWA/kiosk mode, notifications, ICS/backup export). Nothing in
-Phase 1 was deliberately left half-built; what's listed there is genuinely
-not started yet, not a partial implementation.
+`TODO.md` in the repo has **not been updated since Session 2** and is stale
+for the Phase 2 items §9 below completed (Mum's shift optimiser and childcare
+conflict detection are done, ahead of schedule). Still genuinely open, per
+`TODO.md`'s Phase 2-5 breakdown: the What-If planner, the annual-leave/
+holiday-bridging finder, the Jarvis REST + MCP API, API keys, PWA/kiosk mode,
+notifications, ICS/backup export, and the photo/PDF importer needs an
+`ANTHROPIC_API_KEY` to actually work end-to-end (§9.4, §1). Worth updating
+`TODO.md` itself in a future session so it stops undercounting what's done.
 
 ## 6. Technical gotchas (read before touching Vercel/deploy config)
 
@@ -157,6 +169,30 @@ not started yet, not a partial implementation.
    `node_modules/next/dist/docs/` and say to check it before assuming
    anything about App Router conventions. Worth re-reading that note if a
    future session hits an unexpected Next.js error.
+8. **`src/lib/prisma.ts` deliberately appends `pgbouncer=true` to the runtime
+   connection string — never remove this.** Session 2 caused (and then fixed)
+   a real production outage: Supabase's pooled `POSTGRES_URL` runs through
+   PgBouncer in transaction mode, where a query can land on a different
+   backend Postgres connection than the one before it. Prisma's default named/
+   cached prepared statements then collide with a same-named statement a
+   different client already prepared on that connection, and Postgres rejects
+   it with `42P05 prepared statement already exists`. This broke nearly every
+   API route in production (96 errors, 4 real users, ~2 hours) before the fix
+   went in (commit `e1ab303`). `pgbouncer=true` tells Prisma to stop using
+   named prepared statements, which is Prisma's own documented fix and is a
+   no-op against a non-pooled connection — so if a future refactor of
+   `prisma.ts` "simplifies" this away, the outage comes straight back. See the
+   comment in that file for the full mechanism.
+9. **This session pushed feature commits straight to `main`**, not through a
+   PR, because the founder was actively testing the live site in real time and
+   wanted each fix/feature usable within minutes. The `claude/gret-residence-
+   rota-complete-xv4094` branch was kept as a mirror of `main` (pushed to
+   both, in that order) rather than used as a staging branch. This was a
+   speed/safety tradeoff appropriate to that moment (Phase 1 already live,
+   the founder actively watching), not a house rule — a future session should
+   ask the founder whether to keep working this way or move to a PR-based
+   flow now that real family data and daily use exist and an untested push can
+   affect them immediately.
 
 ## 7. How this session worked (context for whoever picks this up)
 
@@ -181,13 +217,204 @@ not started yet, not a partial implementation.
 
 ## 8. First steps for whoever picks this up
 
-1. `git clone` this repo, `git log -5 --oneline` to see what's actually
-   committed.
-2. Read `docs/ARCHITECTURE.md` in full, then `TODO.md` for what's left.
+1. `git clone` this repo, `git log -10 --oneline` to see what's actually
+   committed (should show Session 2's 6 commits — §9.1 — on top of the
+   Session 1 baseline).
+2. Read `docs/ARCHITECTURE.md`, then `TODO.md` for what's left — but see §5,
+   `TODO.md` undercounts what's done as of Session 2.
 3. Confirm what's actually live: check the Vercel project's latest
    deployment matches the repo's `main` HEAD before assuming they match.
-4. Do not attempt to read back `SETUP_TOKEN` or `SESSION_SECRET` — per §6.2,
-   it's not possible, and it's not necessary once the household exists.
+4. Do not attempt to read back `SETUP_TOKEN`, `SESSION_SECRET` or
+   `ANTHROPIC_API_KEY` — per §6.2, it's not possible for a "sensitive" env
+   var, and it's not necessary once the household exists.
 5. Never touch `siteroster` from a session working on this repo, or vice
    versa — they're deliberately separate, unrelated projects that happen to
    share a GitHub owner and a Vercel team.
+6. **A real household's real data now lives in the production database**
+   (§9.6) — the founder is actively using this day-to-day. Never truncate,
+   reset, or run destructive migrations against it without asking first, even
+   for testing. If you need to test against real-shaped data, build it
+   locally (§9.7 has the exact recipe used this session) rather than touching
+   production.
+7. Check `git log` for anything after this document's "Last updated" line —
+   if there's a Session 3+, treat this file's §9 as historical and prefer
+   whatever a later session recorded.
+
+---
+
+## 9. Session 2 (2026-09-27, later the same day): what changed
+
+The founder came back after first deploy having actually used the site, with
+one very concrete critique: it looked confidently right but was often wrong
+(false "both parents off" days, a rota that only started showing from today).
+Everything below followed from fixing that trust problem, then building
+toward the founder's real stated goal — **more time off together as a
+couple** — not just feature-completeness against the original brief.
+
+### 9.1 Commits, in order
+
+All pushed to both `main` and `claude/gret-residence-rota-complete-xv4094`
+(kept as mirrors — see gotcha #9 in §6 on why no PR was used):
+
+1. `abcbf97` — Fixed the trust problem: "both parents off" (and therefore
+   days-off-together, and the month view's pink highlight) now requires every
+   parent's status to be *positively known* for that day, not merely
+   defaulted to off when a parent has no rota/shift entry yet. A first-saved
+   rota now takes effect from its own anchor date instead of only from
+   "today" (a correction still only applies from today on, preserving
+   history). Wired the already-tested childcare engine into the calendar for
+   the first time (plain-English conflict banners on Today/Week, a red dot on
+   Month).
+2. `bc585cb` — Built the Mum shift optimiser (`src/lib/engine/mumOptimiser.ts`,
+   `src/lib/optimiserService.ts`, `POST/GET /api/insights/plan-mum-week`,
+   `PlanWeekSheet.tsx`): a deterministic (no AI) ranked search over real shift
+   combinations that hits the hard weekly-hours requirement exactly,
+   respecting locked days. Added day-locking to the Add sheet.
+3. `3b44ee3` — **Retuned the optimiser's whole ranking priority** after the
+   founder explained the actual goal: more days off *together*, which their
+   wife "could not optimise for" manually. The first version penalised "both
+   parents working" as bad; the new ranking instead maximises shared time off
+   (and specifically "couple daytime while the kids are at school" as the
+   premium outcome) after the two hard constraints (exact hours, no childcare
+   conflicts) — a day both parents work while school covers the kids now
+   *protects* a day off elsewhere rather than being penalised on its own. Also
+   this commit: per-term `weekdays` (so a nursery place that's only Tue/Wed/
+   Thu is modelled correctly — the founder's actual 3-year-old's real
+   schedule, until end of January), a deterministic text-paste school-calendar
+   importer with a mandatory review screen, and "Plan the month" alongside
+   "Plan the week".
+4. `ca09518` — The founder pointed out Mum could do 9am-4pm on the nursery's
+   in-school days. That exposed a real gap: the childcare allowance's
+   "supervisor-age child can cover" rule was whole-day only, so a shift ending
+   shortly after school pickup was wrongly flagged as a childcare conflict,
+   which would have stopped the optimiser ever recommending it. Fixed by
+   making the allowance time-aware (before/after school hours specifically,
+   not just whole days off) — confirmed with a test that the optimiser now
+   places such a shift on the other parent's working days, which is what
+   actually frees up their days off for the couple.
+5. `e1ab303` — **Production incident and fix.** Not planned work — the
+   founder hit a stuck "Loading…" on Settings while testing live. Root cause
+   and fix are gotcha #8 in §6; read that before touching `src/lib/prisma.ts`.
+6. `36f513d` — Photo/PDF school-calendar import via AI vision (the founder's
+   ask: pasted text was getting garbled — see §9.5 for an unresolved example).
+   Full details in §9.4. Inert without `ANTHROPIC_API_KEY` (§1) but fails
+   gracefully (clear message, other features unaffected) without one.
+
+### 9.2 Mum shift optimiser — what it actually optimises for and why
+
+Read `src/lib/engine/mumOptimiser.ts`'s top comment for the exact rank order.
+The short version: exact weekly hours and zero childcare conflicts are hard
+constraints; everything after that maximises `coupleDaytimeOff` (both parents
+off while the kids are at school — this is the outcome the founder actually
+wants) then total shared days off, then minimises handovers and fragmentation.
+It deliberately does **not** penalise "both parents working" as its own
+metric — that was the first version's mistake, corrected in `3b44ee3` (§9.1
+item 3) once the founder explained why: pushing Mum's shifts onto Dad's days
+off *destroys* shared time, it doesn't protect it.
+
+`src/lib/engine/coverage.ts` computes a parent's at-home minutes for a day,
+correctly handling an overnight shift from the night before spilling into the
+morning. `src/lib/optimiserService.ts` is the only place that turns real
+household data (patterns, manual shifts, school terms, the childcare rule,
+ages) into the engine's plain input shape — the engine itself never touches
+Prisma. `PlanWeekSheet.tsx` is used from both the Week page ("Plan the week")
+and Month page ("Plan the month" — runs the engine once per calendar week and
+can apply all of them in one tap).
+
+### 9.3 Childcare conflict detection — now live, and now time-aware
+
+`src/lib/engine/childcare.ts`'s `childcareStatus` takes a `supervisorHome:
+DayInterval[]` (a supervisor-age child's at-home minutes: before/after school
+on a school day, or the whole day when they're off school) rather than a
+day-level "is the 13-year-old off today" boolean. This is what lets a shift
+ending shortly after school pickup count as a HANDOVER instead of a false
+CHILDCARE_NEEDED. Both `calendarService.ts` (for the live calendar) and
+`optimiserService.ts` (for shift planning) compute this the same way from each
+supervisor-age child's school hours — if you add a third place that needs
+childcare status, compute `supervisorHome` intervals the same way rather than
+reintroducing a whole-day boolean.
+
+### 9.4 School-calendar importer — text is live, photo/PDF needs a key
+
+Two import paths, both feeding the *same* mandatory review screen
+(`SchoolsSection.tsx`) before anything is saved — nothing is ever written
+straight from either path:
+
+- **Paste/type text** (`src/lib/schoolImport.ts`'s `parseSchoolCalendarText`)
+  — fully deterministic, no AI, works right now. Reads common school phrasing
+  ("School opens - 7 September 2026" / "Break up - ...", explicit ranges,
+  numeric/ISO/text dates, infers the year from an academic-year hint when the
+  source omits it). Unrecognised lines are surfaced, never silently dropped.
+- **Photo/PDF upload** (`src/lib/schoolVisionImport.ts`, `POST
+  /api/schools/import-vision`) — calls the Anthropic API server-side
+  (`claude-sonnet-5` by default, `ANTHROPIC_MODEL` overrides it) with a
+  strict tool schema forcing structured output. **Needs `ANTHROPIC_API_KEY`
+  set on Vercel to actually work** (§1) — the founder said they'd sort this
+  themselves; don't chase it unless asked. Until it's set, the endpoint
+  returns a clear 501 ("Photo/PDF import isn't set up... use Import from text
+  for now") rather than failing obscurely, and every other feature is
+  unaffected.
+  `validateVisionBlocks` (`src/lib/schoolImport.ts`) is the important part to
+  understand before touching this: it is the one boundary between untrusted AI
+  output and the database. It never trusts a model's own "high confidence"
+  claim — a block only keeps "high" when both dates parsed as real dates AND
+  start ≤ end; anything else is downgraded to "review" and reported as a
+  warning, with the date itself coming through as `null` (an empty, must-fill
+  field) rather than a guessed value. This function is pure and has its own
+  unit tests independent of the network call, precisely so the "never invent
+  a date" guarantee doesn't depend on trusting the AI response — it's
+  re-checked in code regardless of what the model claims.
+  Client-side, a phone photo gets resized/recompressed in-browser (via
+  canvas) before upload, since a raw phone photo is routinely 5-10MB —
+  comfortably over what a Vercel serverless function's request body allows.
+  PDFs aren't recompressed (harder to shrink client-side); an oversized PDF is
+  rejected client- and server-side with a message suggesting a screenshot
+  instead.
+
+### 9.5 Known follow-up bug — NOT fixed this session
+
+While testing the *text* importer live, the founder pasted a real term sheet
+and one entry came out as a garbled merged label — `"Summer Holidays Break up
+Friday"` as a single HOLIDAY block dated `23/07/2027–23/07/2027`, flagged
+"Review recommended." This looks like `parseSchoolCalendarText`'s classifier
+merging what were probably two separate source lines (a holiday-name line and
+a "break up Friday ..." line) because of how the pasted text wrapped or was
+laid out — the review screen caught it and it wasn't imported wrong, but the
+parse itself should be more robust. **Not diagnosed or fixed this session**
+(ran out of time before the founder had to go) — a good next task, ideally
+starting from the founder's actual pasted source text (ask them to re-paste
+what they used) so the exact wrapping/formatting that broke it can become a
+test case.
+
+### 9.6 Real state as of end of Session 2
+
+Live production database now has a real household (not test data): the
+founder's family, work patterns, at least one school and one nursery with
+term dates, and Mum's shift types including a 9-4. **This is real data a real
+family depends on** — see §8 item 6. The founder was mid-session ("ill put
+some figures in and have a play around") when this session ended; expect the
+data to keep changing without another handoff update recording it.
+
+### 9.7 How this session verified changes before shipping
+
+Vercel deploys straight from `main` with no separate staging environment
+(§6 gotcha #9), so this session needed a way to test against a real
+Postgres before every push. Recipe used (this container's local Postgres does
+not persist between sessions, so a future session needs to redo this, not
+resume it): `initdb`/`pg_ctl` run as the `postgres` system user (Postgres
+refuses to run as root) on a Unix socket in a scratch directory, `prisma
+migrate deploy` against it, `npm run build && npm run start`, then either
+direct `curl` with a saved session cookie or a small Playwright script
+driving a real browser at phone viewport size — screenshots were the main way
+bugs (like the original false "both parents off" pink month) were actually
+*seen*, not just reasoned about. Every commit in §9.1 was validated this way
+plus `npm test` (58 tests by end of session, up from 27 at first deploy),
+`tsc --noEmit`, `eslint`, and a full `next build` before pushing.
+
+### 9.8 Genuinely still open (superseding §5 for what's left)
+
+Not started: What-If planner, 🏖️ annual-leave/holiday-bridging optimiser,
+Jarvis REST + MCP API, API keys, PWA/kiosk mode, notifications, ICS/calendar
+export, backups. Started but incomplete: photo/PDF import (built, needs the
+API key — §9.4); the text-importer parser bug (§9.5). `TODO.md` itself was
+not updated this session and should be reconciled against this list.
