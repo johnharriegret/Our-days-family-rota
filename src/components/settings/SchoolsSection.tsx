@@ -114,6 +114,10 @@ export function SchoolsSection({
   const [editingHoursFor, setEditingHoursFor] = useState<string | null>(null);
   const [editStart, setEditStart] = useState("08:45");
   const [editEnd, setEditEnd] = useState("15:15");
+
+  // delete an existing school (two-tap: pick, then confirm)
+  const [deletingSchoolId, setDeletingSchoolId] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
 
   // manual term form
@@ -172,6 +176,17 @@ export function SchoolsSection({
       onChanged();
     } finally {
       setEditBusy(false);
+    }
+  }
+
+  async function deleteSchool(schoolId: string) {
+    setDeleteBusy(true);
+    try {
+      await apiFetch(`/api/schools/${schoolId}`, { method: "DELETE" });
+      setDeletingSchoolId(null);
+      onChanged();
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -286,7 +301,31 @@ export function SchoolsSection({
             >
               <Pencil size={15} />
             </button>
+            <button
+              className="btn btn-ghost"
+              aria-label={`Delete ${school.name}`}
+              style={{ minHeight: "auto", padding: 8 }}
+              onClick={() => setDeletingSchoolId(deletingSchoolId === school.id ? null : school.id)}
+            >
+              <Trash2 size={15} />
+            </button>
           </div>
+
+          {deletingSchoolId === school.id && (
+            <div className="error-banner" style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: 8 }}>
+                Delete {school.name}
+                {school.terms.length > 0 ? ` and its ${school.terms.length} term ${school.terms.length === 1 ? "date" : "dates"}` : ""}?
+                Any child linked to it will just show as unset, ready to be linked to another school.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" onClick={() => setDeletingSchoolId(null)}>Cancel</button>
+                <button className="btn btn-primary" style={{ flex: 1 }} disabled={deleteBusy} onClick={() => deleteSchool(school.id)}>
+                  {deleteBusy ? "Deleting…" : "Delete school"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {editingHoursFor === school.id && (
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 12 }}>

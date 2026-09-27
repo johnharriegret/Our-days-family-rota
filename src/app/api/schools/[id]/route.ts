@@ -27,3 +27,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return NextResponse.json({ school });
   });
 }
+
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  return withApi(async () => {
+    const session = await requireRole("ADMIN", "PARENT");
+    const { id } = await params;
+    const existing = await prisma.school.findFirst({ where: { id, householdId: session.householdId } });
+    if (!existing) return apiError("Not found", 404);
+    // Safe even if children are still linked to it: the schema's FK
+    // (ON DELETE SET NULL) clears their schoolId automatically, and its
+    // SchoolTerm rows cascade-delete with it.
+    await prisma.school.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  });
+}
