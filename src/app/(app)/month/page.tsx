@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Brush, Check, ChevronLeft, ChevronRight, Sparkles, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
@@ -64,6 +64,15 @@ function weekdayIndexMondayFirst(date: string): number {
   return (new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7;
 }
 
+// Two-letter initials (first name + last name) so a shift pill is readable
+// at a glance without needing to tap/hold - e.g. "Harry Green" -> "HG".
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 function mondayOf(date: string): string {
   return addDays(date, -weekdayIndexMondayFirst(date));
 }
@@ -85,6 +94,11 @@ export default function MonthPage() {
   const [days, setDays] = useState<CalendarDayView[]>([]);
   const [loading, setLoading] = useState(true);
   const [showPlan, setShowPlan] = useState(false);
+  // Stable across re-renders (e.g. the calendar refreshing after a plan is
+  // applied) so PlanWeekSheet's own data-fetch effect doesn't re-fire and
+  // flash the whole sheet back to "Working out the best fit..." - it should
+  // only recompute when the viewed month actually changes.
+  const weekStarts = useMemo(() => weekStartsForMonth(monthStart), [monthStart]);
 
   // --- Quick fill (paint) tool -------------------------------------------
   const [quickFillOn, setQuickFillOn] = useState(false);
@@ -210,7 +224,7 @@ export default function MonthPage() {
 
       {showPlan && (
         <PlanWeekSheet
-          weekStarts={weekStartsForMonth(monthStart)}
+          weekStarts={weekStarts}
           onClose={() => setShowPlan(false)}
           onApplied={() => emitCalendarChanged()}
         />
@@ -250,16 +264,18 @@ export default function MonthPage() {
                 title={titleLines.join("\n")}
                 onClick={canPaint ? () => tapDate(day.date) : undefined}
               >
-                <span>{dayNum}</span>
-                <div className="dot-row">
+                <span className="month-cell-daynum">{dayNum}</span>
+                <div className="shift-pills">
                   {day.members
                     .filter((m) => !m.isOff && m.memberKind === "PARENT")
                     .map((m) => (
                       <span
                         key={m.memberId}
-                        className="dot"
+                        className="shift-pill"
                         style={{ background: m.displayColor ?? `var(--${m.colorToken})` }}
-                      />
+                      >
+                        {initials(m.name)}
+                      </span>
                     ))}
                 </div>
                 {mark && (

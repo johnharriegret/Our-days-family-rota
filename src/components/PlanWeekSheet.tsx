@@ -58,7 +58,19 @@ function Metrics({ m }: { m: PlanMetrics }) {
   );
 }
 
-function PlanCard({ plan, label, onApply, busy }: { plan: WeekPlan; label: string; onApply: () => void; busy: boolean }) {
+function PlanCard({
+  plan,
+  label,
+  onApply,
+  busy,
+  applied,
+}: {
+  plan: WeekPlan;
+  label: string;
+  onApply: () => void;
+  busy: boolean;
+  applied?: boolean;
+}) {
   return (
     <div className="plan-card">
       <div className="plan-card-title">{label}</div>
@@ -74,9 +86,15 @@ function PlanCard({ plan, label, onApply, busy }: { plan: WeekPlan; label: strin
         ))}
       </div>
       <Metrics m={plan.metrics} />
-      <button className="btn btn-primary btn-block" disabled={busy} onClick={onApply}>
-        {busy ? "Applying…" : "Apply this plan"}
-      </button>
+      {applied ? (
+        <div className="pill pill-good btn-block" style={{ justifyContent: "center", padding: "13px 20px" }}>
+          <Check size={15} /> Applied
+        </div>
+      ) : (
+        <button className="btn btn-primary btn-block" disabled={busy} onClick={onApply}>
+          {busy ? "Applying…" : "Apply this plan"}
+        </button>
+      )}
     </div>
   );
 }
@@ -97,6 +115,11 @@ export function PlanWeekSheet({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Which weeks (by weekStart) have already been applied this time the sheet
+  // is open - tracked locally so applying one week never has to reload or
+  // close the sheet just to show that it worked; the other weeks' suggestions
+  // stay exactly as they were so they can still be reviewed and applied too.
+  const [appliedWeeks, setAppliedWeeks] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -136,14 +159,20 @@ export function PlanWeekSheet({
     });
   }
 
-  async function applyOne(plan: WeekPlan) {
+  async function applyOne(plan: WeekPlan, weekStart: string) {
     setBusy(true);
     setError(null);
     try {
       await applyPlan(plan);
       onApplied();
-      if (!isMonth) onClose();
-      else await load();
+      if (!isMonth) {
+        onClose();
+      } else {
+        // Mark this week applied in place - no refetch, so the sheet stays
+        // exactly as it was for every other week and doesn't flash back to
+        // a loading state (the actual bug being fixed here).
+        setAppliedWeeks((prev) => new Set(prev).add(weekStart));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't apply the plan");
     } finally {
@@ -198,7 +227,13 @@ export function PlanWeekSheet({
               {data.message && !data.best && <div className="setup-banner">{data.message}</div>}
               {data.best && (
                 <>
-                  <PlanCard plan={data.best} label={isMonth ? "Best fit" : "Best fit"} onApply={() => applyOne(data.best!)} busy={busy} />
+                  <PlanCard
+                    plan={data.best}
+                    label={isMonth ? "Best fit" : "Best fit"}
+                    onApply={() => applyOne(data.best!, data.weekStart)}
+                    busy={busy}
+                    applied={appliedWeeks.has(data.weekStart)}
+                  />
                   {!isMonth && data.alternatives.length > 0 && (
                     <div className="plan-alt-heading">
                       <Check size={13} /> Other options
@@ -206,7 +241,14 @@ export function PlanWeekSheet({
                   )}
                   {!isMonth &&
                     data.alternatives.map((alt, i) => (
-                      <PlanCard key={i} plan={alt} label={`Alternative ${i + 1}`} onApply={() => applyOne(alt)} busy={busy} />
+                      <PlanCard
+                        key={i}
+                        plan={alt}
+                        label={`Alternative ${i + 1}`}
+                        onApply={() => applyOne(alt, data.weekStart)}
+                        busy={busy}
+                        applied={appliedWeeks.has(data.weekStart)}
+                      />
                     ))}
                 </>
               )}
