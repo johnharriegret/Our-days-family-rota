@@ -4,6 +4,7 @@ import {
   childcareStatus,
   homeIntervalsForDay,
   isSchoolDay,
+  nonSchoolDayReason,
   pickupDutyWindows,
   resolvePatternDay,
   subtractIntervals,
@@ -18,6 +19,34 @@ function toDateStr(d: Date): string {
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;
+}
+
+/**
+ * Turns a child's non-school-day reason into the label shown when they're
+ * not at school - "Home · Half term" instead of a bare "Home" - so the
+ * calendar explains WHY, not just that they're off. A school linked with no
+ * term dates entered yet keeps the original "add term dates" nudge for any
+ * day that isn't otherwise explained (a weekend or bank holiday still shows
+ * as such even before term dates exist).
+ */
+function homeLabelFor(
+  reason: ReturnType<typeof nonSchoolDayReason>,
+  hasSchoolLinked: boolean,
+  hasTerms: boolean,
+): string {
+  if (!reason) return "Home";
+  switch (reason.kind) {
+    case "BANK_HOLIDAY":
+    case "HOLIDAY":
+    case "INSET":
+      return `Home · ${reason.label}`;
+    case "WEEKEND":
+      return "Home · Weekend";
+    case "NOT_A_TERM_DAY":
+      return "Home";
+    case "UNKNOWN":
+      return hasSchoolLinked && !hasTerms ? "Home · add term dates" : "Home";
+  }
 }
 
 /** Whole-number age on `date` from an ISO date-of-birth, or null if unknown. */
@@ -135,6 +164,14 @@ export async function getCalendarRange(
 
   const shiftTypes = await prisma.shiftType.findMany({ where: { householdId } });
   const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
+  // A parent who has at least one shift type configured (e.g. Mum's
+  // EARLY/LATE/LONG DAY set) but no rota pattern and no manual entry for a
+  // given date is treated as off that day, not "unset up" - they work from a
+  // one-tap shift list rather than a repeating pattern, so a blank day really
+  // does mean a day off. A parent with NEITHER shift types NOR a pattern is
+  // genuinely unconfigured and still falls through to "Not set up yet" below,
+  // so a half-set-up household never shows a false "both parents off".
+  const ownersWithShiftTypes = new Set(shiftTypes.map((t) => t.ownerId));
 
   // Fetch one day before `from` too, so an overnight shift starting the evening
   // before the range still counts against the first morning's childcare cover.
@@ -213,6 +250,18 @@ export async function getCalendarRange(
         locked: false,
         source: "PATTERN",
         label: working ? `${resolved.kind} ${resolved.startLocal}–${resolved.endLocal}` : "Off",
+      };
+    }
+    if (ownersWithShiftTypes.has(memberId)) {
+      return {
+        known: true,
+        working: false,
+        startLocal: null,
+        endLocal: null,
+        isLeave: false,
+        locked: false,
+        source: "MANUAL",
+        label: "Off",
       };
     }
     return {
@@ -359,8 +408,10 @@ export async function getCalendarRange(
         const atSchool = member.school ? isSchoolDay(date, terms) : false;
         // Distinguish "definitely home" (we have term dates and this isn't a
         // school day) from "we don't know yet" (a school is linked but no term
-        // dates have been entered) - otherwise every day silently reads "Home".
-        const homeLabel = member.school && !hasTerms ? "Home · add term dates" : "Home";
+        // dates have been entered), and explain WHY on a non-school day (half
+        // term, INSET, bank holiday, weekend) instead of a bare "Home".
+        const reason = atSchool ? null : nonSchoolDayReason(date, terms);
+        const homeLabel = homeLabelFor(reason, Boolean(member.school), hasTerms);
         return {
           memberId: member.id,
           name: member.name,
