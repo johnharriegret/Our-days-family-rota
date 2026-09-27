@@ -109,6 +109,33 @@ test("reports a clear message when there are no shift types", () => {
   assert.match(res.message ?? "", /shift type/i);
 });
 
+test("maximises couple time off: works when the other parent works and kids are at school", () => {
+  // A shift that fits inside school hours (09:00-14:00). Working it on the day
+  // the other parent ALSO works (kids covered by school) keeps both of the
+  // other-parent's days off free for the couple, instead of using one up.
+  const SCHOOL = { startMinutes: 9 * 60, endMinutes: 15 * 60 };
+  const inSchool: MumShiftOption = { id: "sch", name: "School hours", startLocal: "09:00", endLocal: "14:00", paidMinutes: 300 };
+  const days: OptimiserDay[] = [
+    plainDay("2026-09-22", { hasChildren: true, schoolCover: SCHOOL, dadShift: null }),
+    plainDay("2026-09-23", { hasChildren: true, schoolCover: SCHOOL, dadShift: { startLocal: "09:00", endLocal: "15:00" } }),
+    plainDay("2026-09-24", { hasChildren: true, schoolCover: SCHOOL, dadShift: null }),
+  ];
+  const res = planMumWeek({
+    days,
+    priorDadShift: null,
+    priorMumShift: null,
+    requiredMinutes: 300,
+    shiftOptions: [inSchool],
+    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.childcareConflicts, 0);
+  assert.equal(res.best.metrics.coupleDaytimeOff, 2, "both of the other parent's days off stay free");
+  assert.ok(res.best.days[1].option, "should work the day the other parent also works");
+  assert.equal(res.best.days[0].option, null);
+  assert.equal(res.best.days[2].option, null);
+});
+
 test("is deterministic - same input, same plan", () => {
   const input = {
     days: WEEK.map((d) => plainDay(d)),

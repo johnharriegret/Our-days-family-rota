@@ -62,7 +62,10 @@ export type PlanMetrics = {
   childcareConflicts: number;
   handoverDays: number;
   bothParentsWorkingDays: number;
+  /** days both parents are off together (family time). */
   familyDaysTogether: number;
+  /** subset of the above where the children are at school = couple daytime. */
+  coupleDaytimeOff: number;
 };
 
 export type WeekPlan = {
@@ -114,6 +117,7 @@ function evaluate(
   let handovers = 0;
   let bothWorking = 0;
   let familyDays = 0;
+  let coupleDaytime = 0;
 
   const planDays: PlanDay[] = days.map((day, i) => {
     const locked = day.locked;
@@ -137,7 +141,13 @@ function evaluate(
     const mumWorking = Boolean(mumToday);
     const dadWorking = Boolean(day.dadShift);
     if (mumWorking && dadWorking) bothWorking += 1;
-    if (!mumWorking && !dadWorking && day.dadKnown) familyDays += 1;
+    if (!mumWorking && !dadWorking && day.dadKnown) {
+      familyDays += 1;
+      // Both parents off AND the children are at school = daytime the couple
+      // gets to themselves. This is the outcome the household most wants, so it
+      // is tracked and rewarded separately from an ordinary shared day off.
+      if (day.schoolCover) coupleDaytime += 1;
+    }
 
     return {
       date: day.date,
@@ -157,6 +167,7 @@ function evaluate(
       handoverDays: handovers,
       bothParentsWorkingDays: bothWorking,
       familyDaysTogether: familyDays,
+      coupleDaytimeOff: coupleDaytime,
     },
   };
 }
@@ -175,17 +186,27 @@ function workingRuns(chosen: (MumShiftOption | null)[], days: OptimiserDay[]): n
 }
 
 /**
- * Lexicographic ranking key, in the spec's priority order (lower is better):
- * 1 exact weekly hours, 2 fewest childcare conflicts, (3 "work while Dad is off"
- * and 4 "minimise both working" are both served by) fewest both-working days,
- * 6 most family days preserved, 7 fewest handovers, 8 least fragmentation.
+ * Lexicographic ranking key (lower is better). The household's overriding goal
+ * is more time off TOGETHER, so after the two hard requirements the ranking
+ * actively MAXIMISES shared time off rather than minimising both-working:
+ *   1. exact weekly hours (spec priority 1)
+ *   2. fewest childcare conflicts (spec priority 2 - a safety constraint)
+ *   3. most couple-daytime-off days (both parents off while the kids are at
+ *      school) - the premium outcome the family is optimising for
+ *   4. most shared days off overall (family time together)
+ *   5. fewest handover days
+ *   6. least fragmented working week
+ * Both-parents-working days are deliberately NOT penalised on their own: a day
+ * both work while the children are safely at school actually PROTECTS a shared
+ * day off elsewhere, and the genuinely bad case (both working with a child home)
+ * is already caught by the childcare-conflict count above.
  */
 function rankKey(plan: WeekPlan, chosen: (MumShiftOption | null)[], days: OptimiserDay[]): number[] {
   const m = plan.metrics;
   return [
     Math.abs(m.totalPaidMinutes - m.requiredMinutes),
     m.childcareConflicts,
-    m.bothParentsWorkingDays,
+    -m.coupleDaytimeOff,
     -m.familyDaysTogether,
     m.handoverDays,
     workingRuns(chosen, days),

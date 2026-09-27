@@ -152,6 +152,7 @@ export async function getMumWeekPlan(
           endDate: toDateStr(t.endDate),
           type: t.type,
           label: t.label,
+          weekdays: t.weekdays,
         })) ?? [];
       const at = c.school ? isSchoolDay(date, terms) : false;
       return {

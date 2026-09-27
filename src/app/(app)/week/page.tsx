@@ -74,16 +74,16 @@ export default function WeekPage() {
       </div>
 
       <button
-        className="btn btn-secondary btn-block"
+        className="btn btn-primary btn-block"
         onClick={() => setShowPlan(true)}
         style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
       >
-        <Sparkles size={17} /> Plan the week
+        <Sparkles size={17} /> Plan the week — best shifts to request
       </button>
 
       {showPlan && (
         <PlanWeekSheet
-          weekStart={weekStart}
+          weekStarts={[weekStart]}
           onClose={() => setShowPlan(false)}
           onApplied={() => emitCalendarChanged()}
         />

@@ -264,6 +264,7 @@ export async function getCalendarRange(
           endDate: toDateStr(t.endDate),
           type: t.type,
           label: t.label,
+          weekdays: t.weekdays,
         })) ?? [];
       const at = c.school ? isSchoolDay(date, terms) : false;
       return {
@@ -317,6 +318,7 @@ export async function getCalendarRange(
             endDate: toDateStr(t.endDate),
             type: t.type,
             label: t.label,
+            weekdays: t.weekdays,
           })) ?? [];
         const hasTerms = terms.length > 0;
         const atSchool = member.school ? isSchoolDay(date, terms) : false;

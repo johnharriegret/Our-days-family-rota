@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { apiFetch } from "@/lib/client";
-import { useCalendarChangedListener } from "@/lib/refresh";
+import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
+import { PlanWeekSheet } from "@/components/PlanWeekSheet";
 import type { CalendarDayView } from "@/lib/clientTypes";
 
 function todayStr(): string {
@@ -40,10 +41,27 @@ function weekdayIndexMondayFirst(date: string): number {
   return (new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7;
 }
 
+function mondayOf(date: string): string {
+  return addDays(date, -weekdayIndexMondayFirst(date));
+}
+
+// The Monday of each week that has any day inside this month.
+function weekStartsForMonth(monthStart: string): string[] {
+  const last = addDays(monthStart, daysInMonth(monthStart) - 1);
+  const starts: string[] = [];
+  let cursor = mondayOf(monthStart);
+  while (cursor <= last) {
+    starts.push(cursor);
+    cursor = addDays(cursor, 7);
+  }
+  return starts;
+}
+
 export default function MonthPage() {
   const [monthStart, setMonthStart] = useState(() => firstOfMonth(todayStr()));
   const [days, setDays] = useState<CalendarDayView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showPlan, setShowPlan] = useState(false);
 
   const load = useCallback(async () => {
     const last = daysInMonth(monthStart);
@@ -74,6 +92,22 @@ export default function MonthPage() {
           <ChevronRight size={22} />
         </button>
       </div>
+
+      <button
+        className="btn btn-primary btn-block"
+        onClick={() => setShowPlan(true)}
+        style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+      >
+        <Sparkles size={17} /> Plan the month — best shifts to request
+      </button>
+
+      {showPlan && (
+        <PlanWeekSheet
+          weekStarts={weekStartsForMonth(monthStart)}
+          onClose={() => setShowPlan(false)}
+          onApplied={() => emitCalendarChanged()}
+        />
+      )}
 
       {loading && <div className="empty-state">Loading…</div>}
 

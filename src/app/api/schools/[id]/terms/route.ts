@@ -12,21 +12,43 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
     if (!school) return apiError("School not found", 404);
 
-    const body = await request.json();
-    const { startDate, endDate, type, label } = body as {
+    type Block = {
       startDate?: string;
       endDate?: string;
       type?: "TERM" | "HOLIDAY" | "INSET" | "BANK_HOLIDAY";
       label?: string;
+      weekdays?: number[];
     };
-    if (!startDate || !endDate || !type || !label) {
-      return apiError("startDate, endDate, type and label are required", 422);
-    }
-    if (startDate > endDate) return apiError("startDate must be on or before endDate", 422);
+    const body = (await request.json()) as Block & { blocks?: Block[] };
+    // Accept either a single block or { blocks: [...] } for a bulk import.
+    const blocks: Block[] = Array.isArray(body.blocks) ? body.blocks : [body];
+    if (blocks.length === 0) return apiError("No term blocks provided", 422);
 
-    const term = await prisma.schoolTerm.create({
-      data: { schoolId, startDate: new Date(startDate), endDate: new Date(endDate), type, label },
-    });
-    return NextResponse.json({ term });
+    const data = [];
+    for (const b of blocks) {
+      if (!b.startDate || !b.endDate || !b.type || !b.label) {
+        return apiError("Each block needs startDate, endDate, type and label", 422);
+      }
+      if (b.startDate > b.endDate) return apiError("startDate must be on or before endDate", 422);
+      const weekdays =
+        Array.isArray(b.weekdays) && b.weekdays.length > 0
+          ? b.weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+          : [1, 2, 3, 4, 5];
+      data.push({
+        schoolId,
+        startDate: new Date(b.startDate),
+        endDate: new Date(b.endDate),
+        type: b.type,
+        label: b.label,
+        weekdays,
+      });
+    }
+
+    if (data.length === 1) {
+      const term = await prisma.schoolTerm.create({ data: data[0] });
+      return NextResponse.json({ term });
+    }
+    const result = await prisma.schoolTerm.createMany({ data });
+    return NextResponse.json({ created: result.count });
   });
 }

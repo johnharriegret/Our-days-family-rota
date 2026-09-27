@@ -34,3 +34,15 @@ test("a bank holiday is not a school day even if inside a TERM block", () => {
 test("outside any term block is not a school day", () => {
   assert.equal(isSchoolDay("2026-12-15", terms), false);
 });
+
+test("a nursery term restricted to Tue/Wed/Thu excludes Monday and Friday", () => {
+  const nursery: SchoolTermSpec[] = [
+    { startDate: "2026-09-01", endDate: "2027-01-31", type: "TERM", label: "Nursery", weekdays: [2, 3, 4] },
+  ];
+  assert.equal(isSchoolDay("2026-09-21", nursery), false); // Monday
+  assert.equal(isSchoolDay("2026-09-22", nursery), true); // Tuesday
+  assert.equal(isSchoolDay("2026-09-23", nursery), true); // Wednesday
+  assert.equal(isSchoolDay("2026-09-24", nursery), true); // Thursday
+  assert.equal(isSchoolDay("2026-09-25", nursery), false); // Friday
+  assert.equal(isSchoolDay("2027-02-02", nursery), false); // after it ends (late Jan)
+});

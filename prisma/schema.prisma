@@ -182,6 +182,9 @@ model SchoolTerm {
   endDate   DateTime @db.Date
   type      TermType
   label     String
+  // Days of the week this block applies to, 0=Sun..6=Sat (default Mon-Fri).
+  // Lets a child attend only some weekdays (e.g. nursery Tue/Wed/Thu).
+  weekdays  Int[]    @default([1, 2, 3, 4, 5])
 
   @@index([schoolId])
 }

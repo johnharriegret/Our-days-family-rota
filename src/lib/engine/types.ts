@@ -35,6 +35,8 @@ export type SchoolTermSpec = {
   endDate: string;
   type: "TERM" | "HOLIDAY" | "INSET" | "BANK_HOLIDAY";
   label: string;
+  /** weekdays this block applies to, 0=Sun..6=Sat; defaults to Mon-Fri. */
+  weekdays?: number[];
 };
 
 export type ChildcareRuleSpec = {
