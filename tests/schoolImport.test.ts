@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseSchoolCalendarText } from "../src/lib/schoolImport.ts";
+import { parseSchoolCalendarText, validateVisionBlocks } from "../src/lib/schoolImport.ts";
 
 test("pairs 'school opens' / 'break up' lines into term blocks (Format A)", () => {
   const text = `
@@ -52,4 +52,63 @@ test("does not invent dates it cannot read", () => {
   const { blocks, unrecognised } = parseSchoolCalendarText("Term starts sometime in September\nRandom note");
   assert.equal(blocks.length, 0);
   assert.ok(unrecognised.length >= 1);
+});
+
+// --- validateVisionBlocks: the untrusted-AI-output boundary ----------------
+
+test("passes through a well-formed, self-consistent block as high confidence", () => {
+  const { blocks, warnings } = validateVisionBlocks({
+    blocks: [{ label: "Autumn 1", type: "TERM", startDate: "2026-09-07", endDate: "2026-10-23", confidence: "high" }],
+  });
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].confidence, "high");
+  assert.deepEqual(blocks[0].weekdays, [1, 2, 3, 4, 5]);
+  assert.equal(warnings.length, 0);
+});
+
+test("downgrades to review when a date is missing, even if the model claimed high confidence", () => {
+  const { blocks, warnings } = validateVisionBlocks({
+    blocks: [{ label: "Summer 2", type: "TERM", startDate: "2027-06-10", endDate: null, confidence: "high" }],
+  });
+  assert.equal(blocks[0].confidence, "review");
+  assert.equal(blocks[0].startDate, "2027-06-10");
+  assert.equal(blocks[0].endDate, null);
+  assert.ok(warnings.some((w) => w.includes("Summer 2")));
+});
+
+test("downgrades to review when start is after end, regardless of claimed confidence", () => {
+  const { blocks } = validateVisionBlocks({
+    blocks: [{ label: "Bad range", type: "TERM", startDate: "2026-10-23", endDate: "2026-09-07", confidence: "high" }],
+  });
+  assert.equal(blocks[0].confidence, "review");
+});
+
+test("never invents a date - an unparseable date string becomes null, not a guess", () => {
+  const { blocks } = validateVisionBlocks({
+    blocks: [{ label: "Smudged", type: "HOLIDAY", startDate: "sometime in October", endDate: "2026-10-30", confidence: "high" }],
+  });
+  assert.equal(blocks[0].startDate, null);
+  assert.equal(blocks[0].confidence, "review");
+});
+
+test("rejects an unknown type and falls back to TERM rather than trusting arbitrary AI text", () => {
+  const { blocks } = validateVisionBlocks({
+    blocks: [{ label: "Weird", type: "DROP TABLE schools;--", startDate: "2026-09-01", endDate: "2026-09-02", confidence: "high" }],
+  });
+  assert.equal(blocks[0].type, "TERM");
+});
+
+test("clamps out-of-range weekday values instead of trusting them", () => {
+  const { blocks } = validateVisionBlocks({
+    blocks: [{ label: "Nursery", type: "TERM", startDate: "2026-09-01", endDate: "2027-01-31", weekdays: [2, 3, 4, 99, -1], confidence: "high" }],
+  });
+  assert.deepEqual(blocks[0].weekdays, [2, 3, 4]);
+});
+
+test("handles a completely malformed or empty response without throwing", () => {
+  assert.deepEqual(validateVisionBlocks(null).blocks, []);
+  assert.deepEqual(validateVisionBlocks({}).blocks, []);
+  assert.deepEqual(validateVisionBlocks({ blocks: "not an array" }).blocks, []);
+  assert.deepEqual(validateVisionBlocks({ blocks: [null, 42, "x"] }).blocks, []);
+  assert.ok(validateVisionBlocks(null).warnings.length > 0);
 });

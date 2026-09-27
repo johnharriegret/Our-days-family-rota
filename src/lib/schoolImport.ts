@@ -15,6 +15,96 @@ export type ParsedBlock = {
   confidence: "high" | "review";
 };
 
+// --- Vision (photo/PDF) import ---------------------------------------------
+// A vision model reads an uploaded document and returns JSON matching roughly
+// the shape below. That JSON is untrusted AI output - validateVisionBlocks is
+// the one place it gets checked before it can reach the review screen. It
+// never lets a bad/uncertain extraction pass as "high confidence": a block
+// only keeps "high" if BOTH dates parsed as real YYYY-MM-DD strings AND
+// start <= end. Anything else is forced to "review" and reported as a
+// warning, and a date the model didn't confidently see comes through as null
+// (rendered as an empty, must-fill-in field) rather than a guessed value.
+
+export type VisionBlockType = ParsedBlockType;
+
+export type VisionBlock = {
+  label: string;
+  type: VisionBlockType;
+  startDate: string | null;
+  endDate: string | null;
+  weekdays: number[];
+  confidence: "high" | "review";
+  note?: string;
+};
+
+export type VisionValidationResult = {
+  blocks: VisionBlock[];
+  warnings: string[];
+};
+
+const VISION_TYPES: VisionBlockType[] = ["TERM", "HOLIDAY", "INSET"];
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DEFAULT_WEEKDAYS = [1, 2, 3, 4, 5];
+
+function asIsoDateOrNull(value: unknown): string | null {
+  return typeof value === "string" && ISO_DATE_RE.test(value) ? value : null;
+}
+
+/**
+ * Validates and clamps a vision model's raw tool-call output into safe
+ * VisionBlock records. Nothing here is trusted: unknown shapes, out-of-range
+ * weekdays, invalid dates and made-up types are all dropped or defaulted
+ * rather than passed through, per the "never write arbitrary AI text to the
+ * database" requirement. This function never calls the network - it's pure
+ * and exhaustively unit-testable on its own.
+ */
+export function validateVisionBlocks(raw: unknown): VisionValidationResult {
+  const warnings: string[] = [];
+  const arr =
+    raw && typeof raw === "object" && Array.isArray((raw as { blocks?: unknown }).blocks)
+      ? ((raw as { blocks: unknown[] }).blocks)
+      : null;
+
+  if (!arr) return { blocks: [], warnings: ["The analyser didn't return any recognisable data."] };
+
+  const blocks: VisionBlock[] = [];
+  for (const rawItem of arr) {
+    if (!rawItem || typeof rawItem !== "object") continue;
+    const item = rawItem as Record<string, unknown>;
+
+    const label =
+      typeof item.label === "string" && item.label.trim() ? item.label.trim().slice(0, 60) : "Untitled";
+    const type = VISION_TYPES.includes(item.type as VisionBlockType) ? (item.type as VisionBlockType) : "TERM";
+    const startDate = asIsoDateOrNull(item.startDate);
+    const endDate = asIsoDateOrNull(item.endDate);
+    const weekdaysRaw = Array.isArray(item.weekdays)
+      ? item.weekdays.filter((d): d is number => Number.isInteger(d) && (d as number) >= 0 && (d as number) <= 6)
+      : [];
+    const weekdays = weekdaysRaw.length > 0 ? weekdaysRaw : DEFAULT_WEEKDAYS;
+
+    const datesOk = startDate != null && endDate != null && startDate <= endDate;
+    const confidence: "high" | "review" = datesOk && item.confidence === "high" ? "high" : "review";
+    if (!datesOk) {
+      warnings.push(`"${label}" — couldn't confidently read both dates; please fill them in before importing.`);
+    }
+
+    blocks.push({
+      label,
+      type,
+      startDate,
+      endDate,
+      weekdays,
+      confidence,
+      note: typeof item.note === "string" ? item.note.slice(0, 200) : undefined,
+    });
+  }
+
+  if (blocks.length === 0) {
+    warnings.push("No dates could be identified in this document. Try a clearer photo/PDF, or paste the dates as text instead.");
+  }
+  return { blocks, warnings };
+}
+
 export type ParseResult = {
   blocks: ParsedBlock[];
   unrecognised: string[];

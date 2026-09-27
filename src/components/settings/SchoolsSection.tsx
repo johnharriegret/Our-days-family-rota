@@ -16,6 +16,7 @@ const TERM_TYPES = [
 ];
 
 const MON_FRI = [1, 2, 3, 4, 5];
+const MAX_UPLOAD_BYTES = 2_800_000; // leaves headroom under the server's request-size cap
 
 type ReviewBlock = {
   label: string;
@@ -25,6 +26,69 @@ type ReviewBlock = {
   weekdays: number[];
   confidence: "high" | "review";
 };
+
+type VisionApiBlock = {
+  label: string;
+  type: ParsedBlockType;
+  startDate: string | null;
+  endDate: string | null;
+  weekdays: number[];
+  confidence: "high" | "review";
+};
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buf);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+/**
+ * Turns an uploaded file into what the vision API accepts. PDFs are sent as-is
+ * (rejected client-side if too large, since we can't shrink a PDF here). A
+ * photo/image is resized and re-compressed in the browser first - a phone
+ * photo is routinely 5-10MB, comfortably over what the server will accept.
+ */
+async function fileToApiPayload(file: File): Promise<{ base64: string; mimeType: string }> {
+  if (file.type === "application/pdf") {
+    const buf = await file.arrayBuffer();
+    if (buf.byteLength > MAX_UPLOAD_BYTES) {
+      throw new Error("That PDF is too large to upload here. Try a screenshot of the page instead, or paste the dates as text.");
+    }
+    return { base64: arrayBufferToBase64(buf), mimeType: "application/pdf" };
+  }
+
+  const bitmap = await createImageBitmap(file);
+  let { width, height } = bitmap;
+  const MAX_DIM = 2000;
+  if (width > MAX_DIM || height > MAX_DIM) {
+    const scale = MAX_DIM / Math.max(width, height);
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Couldn't process that image in this browser.");
+  ctx.drawImage(bitmap, 0, 0, width, height);
+
+  let quality = 0.85;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const blob: Blob = await new Promise((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't encode that image."))), "image/jpeg", quality),
+    );
+    if (blob.size <= MAX_UPLOAD_BYTES || quality <= 0.4) {
+      const buf = await blob.arrayBuffer();
+      return { base64: arrayBufferToBase64(buf), mimeType: "image/jpeg" };
+    }
+    quality -= 0.15;
+  }
+  throw new Error("Couldn't shrink that photo enough to upload. Try a lower-resolution photo.");
+}
 
 export function SchoolsSection() {
   const [schools, setSchools] = useState<School[]>([]);
@@ -49,6 +113,8 @@ export function SchoolsSection() {
   const [review, setReview] = useState<ReviewBlock[] | null>(null);
   const [unrecognised, setUnrecognised] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [visionBusy, setVisionBusy] = useState(false);
+  const [visionError, setVisionError] = useState<string | null>(null);
 
   function load() {
     apiFetch<{ schools: School[] }>("/api/schools").then((d) => setSchools(d.schools));
@@ -96,6 +162,33 @@ export function SchoolsSection() {
     setReview(result.blocks.map((b) => ({ ...b, weekdays: MON_FRI })));
   }
 
+  async function analyseFile(file: File) {
+    setVisionError(null);
+    setVisionBusy(true);
+    try {
+      const { base64, mimeType } = await fileToApiPayload(file);
+      const result = await apiFetch<{ blocks: VisionApiBlock[]; warnings: string[]; legendUnderstood: boolean | null }>(
+        "/api/schools/import-vision",
+        { method: "POST", body: JSON.stringify({ base64, mimeType, academicYearStart: ayStart }) },
+      );
+      setUnrecognised(result.warnings);
+      setReview(
+        result.blocks.map((b) => ({
+          label: b.label,
+          type: b.type,
+          startDate: b.startDate ?? "",
+          endDate: b.endDate ?? "",
+          weekdays: b.weekdays,
+          confidence: b.confidence,
+        })),
+      );
+    } catch (err) {
+      setVisionError(err instanceof Error ? err.message : "Couldn't analyse that file");
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
   async function confirmImport(schoolId: string) {
     if (!review || review.length === 0) return;
     setBusy(true);
@@ -116,6 +209,7 @@ export function SchoolsSection() {
       setImportText("");
       setReview(null);
       setUnrecognised([]);
+      setVisionError(null);
       load();
     } finally {
       setBusy(false);
@@ -125,6 +219,8 @@ export function SchoolsSection() {
   function updateReview(i: number, patch: Partial<ReviewBlock>) {
     setReview((prev) => (prev ? prev.map((b, idx) => (idx === i ? { ...b, ...patch } : b)) : prev));
   }
+
+  const hasIncompleteDates = review?.some((b) => !b.startDate || !b.endDate) ?? false;
 
   return (
     <div className="card">
@@ -209,15 +305,41 @@ export function SchoolsSection() {
                     <label>Academic year starts (used only if the sheet omits the year)</label>
                     <input type="number" value={ayStart} onChange={(e) => setAyStart(Number(e.target.value))} />
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button className="btn btn-ghost" onClick={() => { setImportFor(null); setImportText(""); }}>Cancel</button>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                    <button className="btn btn-ghost" onClick={() => { setImportFor(null); setImportText(""); setVisionError(null); }}>Cancel</button>
                     <button className="btn btn-primary" style={{ flex: 1 }} disabled={!importText.trim()} onClick={analyse}>Analyse dates</button>
                   </div>
+
+                  <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12.5, margin: "4px 0 10px" }}>— or —</div>
+
+                  {visionError && <div className="error-banner">{visionError}</div>}
+                  {visionBusy ? (
+                    <div className="empty-state" style={{ padding: "16px 0" }}>Analysing your document… this can take up to a minute.</div>
+                  ) : (
+                    <label className="btn btn-secondary btn-block" style={{ display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                      📷 Upload a photo or PDF instead
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,application/pdf"
+                        capture="environment"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = "";
+                          if (file) analyseFile(file);
+                        }}
+                      />
+                    </label>
+                  )}
+                  <p style={{ color: "var(--muted)", fontSize: 12, marginTop: 6 }}>
+                    Take or choose a photo of the term-date sheet, or upload a PDF. It&apos;s read the same way, with the
+                    same check-before-import screen below.
+                  </p>
                 </>
               ) : (
                 <>
                   <div style={{ fontWeight: 800, marginBottom: 8 }}>We found these dates — check before importing</div>
-                  {review.length === 0 && <div className="error-banner">Couldn&apos;t read any dates. Try the manual form instead.</div>}
+                  {review.length === 0 && <div className="error-banner">Couldn&apos;t read any dates. Try the manual form or a different photo instead.</div>}
                   {review.map((b, i) => (
                     <div key={i} className="plan-card" style={{ padding: 10 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 8 }}>
@@ -226,9 +348,13 @@ export function SchoolsSection() {
                           <Trash2 size={15} />
                         </button>
                       </div>
-                      {b.confidence === "review" && (
+                      {(!b.startDate || !b.endDate) ? (
+                        <div className="childcare-banner needed" style={{ marginTop: 0, marginBottom: 6 }}>
+                          Couldn&apos;t confidently read {!b.startDate && !b.endDate ? "either date" : !b.startDate ? "the start date" : "the end date"} — fill it in before importing.
+                        </div>
+                      ) : b.confidence === "review" ? (
                         <div className="childcare-banner handover" style={{ marginTop: 0, marginBottom: 6 }}>Review recommended — please check this one.</div>
-                      )}
+                      ) : null}
                       <div style={{ display: "flex", gap: 8 }}>
                         <div className="field" style={{ flex: 1, marginBottom: 6 }}>
                           <label>From</label>
@@ -255,13 +381,21 @@ export function SchoolsSection() {
                   ))}
                   {unrecognised.length > 0 && (
                     <div className="setup-banner" style={{ fontSize: 13 }}>
-                      Couldn&apos;t read {unrecognised.length} line(s): {unrecognised.slice(0, 3).join("; ")}
-                      {unrecognised.length > 3 ? "…" : ""}. Add those with the manual form.
+                      {unrecognised.slice(0, 4).map((u, i) => (<div key={i}>{u}</div>))}
+                      {unrecognised.length > 4 ? `…and ${unrecognised.length - 4} more.` : ""} Add anything missing with the manual form.
                     </div>
                   )}
+                  {hasIncompleteDates && (
+                    <div className="error-banner">Fill in every highlighted date before importing — nothing gets saved with a guessed date.</div>
+                  )}
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button className="btn btn-ghost" onClick={() => setReview(null)}>Back</button>
-                    <button className="btn btn-primary" style={{ flex: 1 }} disabled={busy || review.length === 0} onClick={() => confirmImport(school.id)}>
+                    <button className="btn btn-ghost" onClick={() => { setReview(null); setUnrecognised([]); setVisionError(null); }}>Back</button>
+                    <button
+                      className="btn btn-primary"
+                      style={{ flex: 1 }}
+                      disabled={busy || review.length === 0 || hasIncompleteDates}
+                      onClick={() => confirmImport(school.id)}
+                    >
                       {busy ? "Importing…" : `Confirm & import ${review.length}`}
                     </button>
                   </div>
