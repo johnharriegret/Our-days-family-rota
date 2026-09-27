@@ -241,6 +241,131 @@ test("a plan is applied exactly as it was validated, and the calendar agrees", {
   }
 });
 
+test("the other parent's own shift types are resolved, not read as a day off", { skip: !hasDatabase }, async () => {
+  // Found by the CodeRabbit audit. The planner used to resolve a saved shift
+  // against only the PLANNED parent's own active shift types. Anything else -
+  // the other parent's own shift type, or an archived one - fell through to
+  // "no times", which the engine reads as a day off. The planner then believed
+  // somebody was at home when they were at work, and missed the conflict. The
+  // calendar resolved the same row correctly, so the two disagreed.
+  const { prisma } = await import("../src/lib/prisma.ts");
+  const { getMumWeekPlan } = await import("../src/lib/optimiserService.ts");
+
+  const household = await prisma.household.create({ data: { timezone: "Europe/London" } });
+  try {
+    const school = await prisma.school.create({
+      data: {
+        householdId: household.id,
+        name: `${SUITE_TAG} school 2`,
+        startLocal: "08:45",
+        endLocal: "15:15",
+        terms: {
+          create: [
+            {
+              startDate: new Date("2026-09-07T00:00:00.000Z"),
+              endDate: new Date("2026-10-23T00:00:00.000Z"),
+              type: "TERM",
+              label: "Autumn 1",
+              weekdays: [1, 2, 3, 4, 5],
+            },
+          ],
+        },
+      },
+    });
+    const dad = await prisma.familyMember.create({
+      data: { householdId: household.id, name: "Dad", kind: "PARENT", colorToken: "orange", icon: "user" },
+    });
+    const mum = await prisma.familyMember.create({
+      data: {
+        householdId: household.id,
+        name: "Mum",
+        kind: "PARENT",
+        colorToken: "pink",
+        icon: "user",
+        requiredWeeklyMinutes: 750,
+      },
+    });
+    for (const [name, dob] of [["Teen", "2013-01-05"], ["Toddler", "2023-01-05"]] as const) {
+      await prisma.familyMember.create({
+        data: {
+          householdId: household.id,
+          name,
+          kind: "CHILD",
+          colorToken: "blue",
+          icon: "user",
+          dateOfBirth: new Date(`${dob}T00:00:00.000Z`),
+          schoolId: school.id,
+        },
+      });
+    }
+    await prisma.childcareRule.create({
+      data: {
+        householdId: household.id,
+        maxUnsupervisedMinutes: 180,
+        appliesWeekends: true,
+        minSupervisorAge: 13,
+        pickupBufferMinutes: 30,
+        schoolRunMorningFromLocal: "06:00",
+      },
+    });
+
+    // Dad's OWN shift type, and a saved week of it. Mum only has a Long Day,
+    // which cannot coexist with his day shift without leaving the school run
+    // uncovered - so the planner must find no safe plan.
+    const dadDay = await prisma.shiftType.create({
+      data: {
+        householdId: household.id,
+        ownerId: dad.id,
+        name: "Dad Day",
+        startLocal: "06:00",
+        endLocal: "18:00",
+        paidMinutes: 720,
+        color: "#fa0",
+      },
+    });
+    await prisma.shiftType.create({
+      data: {
+        householdId: household.id,
+        ownerId: mum.id,
+        name: "Long Day",
+        startLocal: "07:00",
+        endLocal: "20:00",
+        paidMinutes: 750,
+        color: "#0af",
+      },
+    });
+
+    const week = ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-27"];
+    for (const date of [...week, "2026-09-20", "2026-09-28"]) {
+      await prisma.workShift.create({
+        data: {
+          householdId: household.id,
+          ownerId: dad.id,
+          date: new Date(`${date}T00:00:00.000Z`),
+          shiftTypeId: dadDay.id,
+          paidMinutes: 720,
+          source: "MANUAL",
+        },
+      });
+    }
+
+    const plan = await getMumWeekPlan(household.id, mum.id, week[0]);
+    const seenAsWorking = (plan.best ?? plan.bestWithConflicts)?.days.filter((d) => d.dadShift) ?? [];
+    assert.equal(seenAsWorking.length, 7, "every one of his saved day shifts must be visible to the planner");
+    assert.deepEqual(seenAsWorking[0].dadShift, { startLocal: "06:00", endLocal: "18:00" }, "with its real hours");
+
+    // And because he is on days all week, the only way to reach her hours is a
+    // Long Day that leaves the school run uncovered - so the exact-hours option
+    // must come back flagged rather than recommended.
+    assert.ok(plan.bestWithConflicts, "the clash must be reported");
+    assert.ok(plan.bestWithConflicts.conflicts.length > 0);
+    assert.equal(plan.best?.metrics.childcareConflicts ?? 0, 0, "anything recommended is still safe");
+  } finally {
+    await prisma.household.delete({ where: { id: household.id } });
+    await prisma.$disconnect();
+  }
+});
+
 test("a locked day is never overwritten by applying a plan", { skip: !hasDatabase }, async () => {
   const { prisma } = await import("../src/lib/prisma.ts");
   const { applyMumWeekPlan } = await import("../src/lib/optimiserService.ts");

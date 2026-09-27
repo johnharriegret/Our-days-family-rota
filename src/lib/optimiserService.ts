@@ -66,8 +66,12 @@ type HouseholdContext = {
   hasChildren: boolean;
   timeZone: string;
   ruleConfig: HouseholdRuleConfig;
+  /** what this parent may be asked to work: their own, still-active types. */
   shiftOptions: MumShiftOption[];
+  /** every shift type in the household, for resolving a saved row's real hours. */
   shiftTypeById: Map<string, { startLocal: string; endLocal: string; paidMinutes: number; name: string }>;
+  /** ids from shiftOptions, for rejecting an assignment that isn't one of them. */
+  ownerActiveTypeIds: Set<string>;
   activePattern: (id: string, date: string) => ShiftPatternSpec | null;
   workingInterval: (id: string, date: string) => { known: boolean; shift: ShiftInterval | null };
   shiftByKey: Map<string, { locked: boolean; shiftTypeId: string | null; customStart: string | null; customEnd: string | null; paidMinutes: number | null }>;
@@ -107,15 +111,34 @@ async function loadHouseholdContext(
     orderBy: { effectiveFrom: "desc" },
   });
 
-  const shiftTypes = await prisma.shiftType.findMany({ where: { householdId, ownerId, archived: false } });
-  const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
-  const shiftOptions: MumShiftOption[] = shiftTypes.map((t) => ({
-    id: t.id,
-    name: t.name,
-    startLocal: t.startLocal,
-    endLocal: t.endLocal,
-    paidMinutes: t.paidMinutes,
-  }));
+  // Two different questions, two different sets.
+  //
+  // RESOLVING a saved shift needs every shift type in the household, archived
+  // ones included and whoever owns them: a row that references the other
+  // parent's own shift type, or one that has since been archived, still
+  // describes real hours somebody really works. Looking it up in a narrower
+  // set returned nothing, the times came out null, and the engine read that as
+  // a day off - so the planner believed a parent was at home while they were
+  // at work, and stopped seeing the conflict. The calendar had always resolved
+  // these rows household-wide, which is exactly the disagreement between the
+  // two that this rebuild exists to remove.
+  //
+  // OFFERING a shift to work is a different matter: only the planned parent's
+  // own, still-active types may be proposed.
+  const allShiftTypes = await prisma.shiftType.findMany({ where: { householdId } });
+  const shiftTypeById = new Map(allShiftTypes.map((t) => [t.id, t]));
+  const ownerActiveTypeIds = new Set(
+    allShiftTypes.filter((t) => t.ownerId === ownerId && !t.archived).map((t) => t.id),
+  );
+  const shiftOptions: MumShiftOption[] = allShiftTypes
+    .filter((t) => t.ownerId === ownerId && !t.archived)
+    .map((t) => ({
+      id: t.id,
+      name: t.name,
+      startLocal: t.startLocal,
+      endLocal: t.endLocal,
+      paidMinutes: t.paidMinutes,
+    }));
 
   const relevantIds = [ownerId, ...(otherParent ? [otherParent.id] : [])];
   const patterns = await prisma.shiftPattern.findMany({
@@ -217,6 +240,7 @@ async function loadHouseholdContext(
     },
     shiftOptions,
     shiftTypeById,
+    ownerActiveTypeIds,
     activePattern,
     workingInterval,
     shiftByKey,
