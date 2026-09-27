@@ -4,8 +4,12 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DATABASE_URL_NON_POOLING")
+  // Reuses the env vars the Supabase Vercel integration already provisions
+  // on the target project (POSTGRES_URL / POSTGRES_URL_NON_POOLING) -
+  // deliberately not DATABASE_URL, so connecting this repo to that Vercel
+  // project needs zero manual env var setup.
+  url       = env("POSTGRES_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 enum Role {

@@ -19,9 +19,8 @@ SQL, no NextAuth — kept deliberately simple per the project brief.
 
 1. `npm install`
 2. Copy `.env.example` to `.env.local` and fill in:
-   - `DATABASE_URL` / `DATABASE_URL_NON_POOLING` — a Postgres connection
-     (Supabase project → Settings → Database gives you `POSTGRES_URL` and
-     `POSTGRES_URL_NON_POOLING`, which map directly to these two).
+   - `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` — a Postgres connection
+     string (Supabase project → Settings → Database).
    - `SESSION_SECRET` — `openssl rand -hex 32`
    - `SETUP_TOKEN` — `openssl rand -hex 24`, shown once to whoever creates
      the first admin account.
@@ -42,10 +41,10 @@ rule that calendar math must be deterministic and independently testable.
 ## Deploy
 
 This repo is meant to be connected to the existing `gretresidencerota`
-Vercel project (same Supabase Postgres instance that project already has
-provisioned) — point that project's Git integration at this repo, add
-`DATABASE_URL`/`DATABASE_URL_NON_POOLING` (its `POSTGRES_URL`/
-`POSTGRES_URL_NON_POOLING` values), keep its existing `SESSION_SECRET`/
-`SETUP_TOKEN`. `npm run vercel-build` runs `prisma migrate deploy` before
-`next build`, so pushing to the connected branch applies any new migration
-automatically.
+Vercel project — it already has `POSTGRES_URL`/`POSTGRES_URL_NON_POOLING`
+(from its Supabase integration) and `SESSION_SECRET`/`SETUP_TOKEN` set, which
+is all this app needs, so connecting the repo is the only step required:
+Vercel dashboard → that project → **Settings → Git → Connect Git Repository**
+→ pick `johnharriegret/our-days-family-rota`. `npm run vercel-build` runs
+`prisma migrate deploy` before `next build`, so every push applies any new
+migration automatically.
