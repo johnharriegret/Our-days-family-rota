@@ -145,6 +145,8 @@ export function PlanWeekSheet({
   onApplied: () => void;
 }) {
   const isMonth = weekStarts.length > 1;
+  // A calendar month is at most 6 weeks; anything longer is a year plan.
+  const scopeWord = weekStarts.length <= 1 ? "week" : weekStarts.length > 6 ? "year" : "month";
   const [ownerName, setOwnerName] = useState<string>("");
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [plans, setPlans] = useState<PlanResponse[]>([]);
@@ -239,7 +241,7 @@ export function PlanWeekSheet({
         <div className="sheet-handle" />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <strong style={{ fontSize: 17, display: "flex", alignItems: "center", gap: 6 }}>
-            <Sparkles size={18} /> {ownerName ? `Plan ${ownerName}'s ${isMonth ? "month" : "week"}` : "Plan shifts"}
+            <Sparkles size={18} /> {ownerName ? `Plan ${ownerName}'s ${scopeWord}` : "Plan shifts"}
           </strong>
           <button className="btn btn-ghost" onClick={onClose} aria-label="Close" style={{ padding: 8, minHeight: "auto" }}>
             <X size={22} />
@@ -256,7 +258,7 @@ export function PlanWeekSheet({
 
         {!loading && isMonth && plans.some((p) => p.best) && (
           <button className="btn btn-primary btn-block" disabled={busy} onClick={applyAll} style={{ marginBottom: 14 }}>
-            {busy ? "Applying…" : "Apply best fit for the whole month"}
+            {busy ? "Applying…" : `Apply best fit for the whole ${scopeWord}`}
           </button>
         )}
 

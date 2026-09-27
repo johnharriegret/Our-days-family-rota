@@ -82,16 +82,31 @@ function weekStartsForMonth(monthStart: string): string[] {
   return starts;
 }
 
+// Every week's Monday for the 12 months starting from this one.
+function weekStartsForYear(monthStart: string): string[] {
+  const last = addDays(addMonths(monthStart, 12), -1);
+  const starts: string[] = [];
+  let cursor = mondayOf(monthStart);
+  while (cursor <= last) {
+    starts.push(cursor);
+    cursor = addDays(cursor, 7);
+  }
+  return starts;
+}
+
 export default function MonthPage() {
   const [monthStart, setMonthStart] = useState(() => firstOfMonth(todayStr()));
   const [days, setDays] = useState<CalendarDayView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showPlan, setShowPlan] = useState(false);
+  // null = closed; otherwise which scope of plan is open.
+  const [planScope, setPlanScope] = useState<"month" | "year" | null>(null);
   // Stable across re-renders (e.g. the calendar refreshing after a plan is
   // applied) so PlanWeekSheet's own data-fetch effect doesn't re-fire and
   // flash the whole sheet back to "Working out the best fit..." - it should
-  // only recompute when the viewed month actually changes.
+  // only recompute when the viewed month (or, for a year plan, its start)
+  // actually changes.
   const weekStarts = useMemo(() => weekStartsForMonth(monthStart), [monthStart]);
+  const yearWeekStarts = useMemo(() => weekStartsForYear(monthStart), [monthStart]);
 
   // --- Quick fill (paint) tool -------------------------------------------
   const [quickFillOn, setQuickFillOn] = useState(false);
@@ -209,18 +224,27 @@ export default function MonthPage() {
         </button>
       </div>
 
-      <button
-        className="btn btn-primary btn-block"
-        onClick={() => setShowPlan(true)}
-        style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
-      >
-        <Sparkles size={17} /> Plan the month — best shifts to request
-      </button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button
+          className="btn btn-primary"
+          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+          onClick={() => setPlanScope("month")}
+        >
+          <Sparkles size={17} /> Plan the month
+        </button>
+        <button
+          className="btn btn-secondary"
+          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+          onClick={() => setPlanScope("year")}
+        >
+          <Sparkles size={17} /> Plan the year
+        </button>
+      </div>
 
-      {showPlan && (
+      {planScope && (
         <PlanWeekSheet
-          weekStarts={weekStarts}
-          onClose={() => setShowPlan(false)}
+          weekStarts={planScope === "year" ? yearWeekStarts : weekStarts}
+          onClose={() => setPlanScope(null)}
           onApplied={() => emitCalendarChanged()}
         />
       )}
