@@ -38,29 +38,57 @@ export function FamilyMembersSection({
   } | null>(null);
   const [colorBusy, setColorBusy] = useState(false);
 
-  // Edit an existing member's hard weekly hours requirement.
-  const [editingHoursFor, setEditingHoursFor] = useState<string | null>(null);
-  const [hoursDraft, setHoursDraft] = useState<string>("");
-  const [hoursBusy, setHoursBusy] = useState(false);
+  // Edit an existing member's own details: name, and (child) date of birth /
+  // school, or (parent) hard weekly hours requirement. Everything about a
+  // person that was only ever settable when they were first added.
+  const [editingDetailsFor, setEditingDetailsFor] = useState<string | null>(null);
+  const [detailsDraft, setDetailsDraft] = useState<{
+    name: string;
+    dateOfBirth: string;
+    schoolId: string;
+    requiredWeeklyMinutes: string;
+  } | null>(null);
+  const [detailsBusy, setDetailsBusy] = useState(false);
 
-  function openHoursEditor(member: FamilyMember) {
-    setEditingHoursFor(member.id);
-    setHoursDraft(member.requiredWeeklyMinutes ? String(member.requiredWeeklyMinutes / 60) : "");
+  function openDetailsEditor(member: FamilyMember) {
+    setEditingDetailsFor(member.id);
+    setDetailsDraft({
+      name: member.name,
+      dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "",
+      schoolId: member.schoolId ?? "",
+      requiredWeeklyMinutes: member.requiredWeeklyMinutes ? String(member.requiredWeeklyMinutes / 60) : "",
+    });
+    setError(null);
   }
 
-  async function saveHours(memberId: string) {
-    setHoursBusy(true);
+  async function saveDetails(member: FamilyMember) {
+    if (!detailsDraft) return;
+    if (!detailsDraft.name.trim()) return setError("Name can't be empty");
+    setDetailsBusy(true);
+    setError(null);
     try {
-      await apiFetch(`/api/family-members/${memberId}`, {
+      await apiFetch(`/api/family-members/${member.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ requiredWeeklyMinutes: hoursDraft ? Math.round(Number(hoursDraft) * 60) : null }),
+        body: JSON.stringify({
+          name: detailsDraft.name.trim(),
+          ...(member.kind === "CHILD" && {
+            dateOfBirth: detailsDraft.dateOfBirth || null,
+            schoolId: detailsDraft.schoolId || null,
+          }),
+          ...(member.kind === "PARENT" && {
+            requiredWeeklyMinutes: detailsDraft.requiredWeeklyMinutes
+              ? Math.round(Number(detailsDraft.requiredWeeklyMinutes) * 60)
+              : null,
+          }),
+        }),
       });
-      setEditingHoursFor(null);
+      setEditingDetailsFor(null);
+      setDetailsDraft(null);
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
-      setHoursBusy(false);
+      setDetailsBusy(false);
     }
   }
 
@@ -133,16 +161,14 @@ export function FamilyMembersSection({
                 {m.requiredWeeklyMinutes ? ` · ${(m.requiredWeeklyMinutes / 60).toFixed(1)}h/week` : ""}
               </div>
             </div>
-            {m.kind === "PARENT" && (
-              <button
-                className="btn btn-ghost"
-                aria-label={`Edit ${m.name}'s weekly hours`}
-                style={{ minHeight: "auto", padding: 8 }}
-                onClick={() => (editingHoursFor === m.id ? setEditingHoursFor(null) : openHoursEditor(m))}
-              >
-                <Pencil size={16} />
-              </button>
-            )}
+            <button
+              className="btn btn-ghost"
+              aria-label={`Edit ${m.name}'s details`}
+              style={{ minHeight: "auto", padding: 8 }}
+              onClick={() => (editingDetailsFor === m.id ? setEditingDetailsFor(null) : openDetailsEditor(m))}
+            >
+              <Pencil size={16} />
+            </button>
             {m.kind === "PARENT" && (
               <button
                 className="btn btn-ghost"
@@ -155,21 +181,65 @@ export function FamilyMembersSection({
             )}
           </div>
 
-          {editingHoursFor === m.id && (
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 14 }}>
-              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                <label>Hard weekly hours requirement (blank = none)</label>
+          {editingDetailsFor === m.id && detailsDraft && (
+            <div style={{ padding: "10px 0 16px", borderBottom: "1px solid var(--line)", marginBottom: 4 }}>
+              {error && <div className="error-banner">{error}</div>}
+              <div className="field">
+                <label>Name</label>
                 <input
-                  type="number"
-                  step="0.5"
-                  placeholder="e.g. 36"
-                  value={hoursDraft}
-                  onChange={(e) => setHoursDraft(e.target.value)}
+                  value={detailsDraft.name}
+                  onChange={(e) => setDetailsDraft({ ...detailsDraft, name: e.target.value })}
+                  autoFocus
                 />
               </div>
-              <button className="btn btn-primary" disabled={hoursBusy} onClick={() => saveHours(m.id)} style={{ marginBottom: 0 }}>
-                {hoursBusy ? "…" : "Save"}
-              </button>
+              {m.kind === "CHILD" && (
+                <>
+                  <div className="field">
+                    <label>Date of birth</label>
+                    <input
+                      type="date"
+                      value={detailsDraft.dateOfBirth}
+                      onChange={(e) => setDetailsDraft({ ...detailsDraft, dateOfBirth: e.target.value })}
+                    />
+                  </div>
+                  {schools.length > 0 && (
+                    <div className="field">
+                      <label>School</label>
+                      <select
+                        value={detailsDraft.schoolId}
+                        onChange={(e) => setDetailsDraft({ ...detailsDraft, schoolId: e.target.value })}
+                      >
+                        <option value="">None yet</option>
+                        {schools.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </>
+              )}
+              {m.kind === "PARENT" && (
+                <div className="field">
+                  <label>Hard weekly hours requirement (blank = none)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    placeholder="e.g. 36"
+                    value={detailsDraft.requiredWeeklyMinutes}
+                    onChange={(e) => setDetailsDraft({ ...detailsDraft, requiredWeeklyMinutes: e.target.value })}
+                  />
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" onClick={() => { setEditingDetailsFor(null); setDetailsDraft(null); setError(null); }}>
+                  Cancel
+                </button>
+                <button className="btn btn-primary" style={{ flex: 1 }} disabled={detailsBusy} onClick={() => saveDetails(m)}>
+                  {detailsBusy ? "Saving…" : "Save"}
+                </button>
+              </div>
             </div>
           )}
 
