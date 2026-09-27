@@ -135,8 +135,12 @@ export function PlanWeekSheet({
       }
       setOwnerName(owner.name);
       setOwnerId(owner.id);
-      const results = await Promise.all(
-        weekStarts.map((ws) => apiFetch<PlanResponse>(`/api/insights/plan-mum-week?ownerId=${owner.id}&weekStart=${ws}`)),
+      // One request for every week together (even just one), computed
+      // sequentially server-side - a week's own suggested Sunday needs to be
+      // visible to the next week's Monday, which independent parallel
+      // requests could never see (see getMumMonthPlan's comment for why).
+      const { plans: results } = await apiFetch<{ plans: PlanResponse[] }>(
+        `/api/insights/plan-mum-week?ownerId=${owner.id}&weekStarts=${weekStarts.join(",")}`,
       );
       setPlans(results);
     } catch (err) {

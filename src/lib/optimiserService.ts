@@ -40,6 +40,16 @@ export async function getMumWeekPlan(
   householdId: string,
   ownerId: string,
   weekStart: string,
+  /**
+   * Overrides what the day before this week looked like for this owner,
+   * instead of reading it from the database. Used when planning several
+   * consecutive weeks in one go (see getMumMonthPlan below): a week's own
+   * suggested-but-not-yet-applied Sunday shift wouldn't otherwise be visible
+   * to the next week's plan at all, since nothing's been saved yet. Pass
+   * `undefined` (the default) to read the real saved state as normal, or
+   * `null` explicitly for "the day before was a proposed day off".
+   */
+  priorMumShiftOverride?: ShiftInterval | null,
 ): Promise<MumWeekPlan> {
   const owner = await prisma.familyMember.findFirst({
     where: { id: ownerId, householdId, kind: "PARENT" },
@@ -231,7 +241,7 @@ export async function getMumWeekPlan(
   }
 
   const priorDadShift = otherParent ? workingInterval(otherParent.id, rangeStart).shift : null;
-  const priorMumShift = workingInterval(ownerId, rangeStart).shift;
+  const priorMumShift = priorMumShiftOverride !== undefined ? priorMumShiftOverride : workingInterval(ownerId, rangeStart).shift;
 
   if (owner.requiredWeeklyMinutes == null) {
     return {
@@ -258,6 +268,48 @@ export async function getMumWeekPlan(
   });
 
   return { ...result, ownerId, ownerName: owner.name, weekStart, requiredMinutes: owner.requiredWeeklyMinutes };
+}
+
+/**
+ * Plans several consecutive weeks together (the "Plan the month" flow),
+ * chaining each week's own suggested Sunday into the next week's "day
+ * before" input instead of letting every week read the database in
+ * isolation.
+ *
+ * This matters because nothing is saved until the user taps Apply: without
+ * chaining, a week suggesting a Sunday night shift and the FOLLOWING week's
+ * Monday would each look independently fine, while the household's actual
+ * combined situation - a parent still finishing a night shift right when the
+ * other leaves for a day shift, with children who need help getting ready
+ * for school - would never be checked at all. Fixes a real reported case:
+ * a Sunday night shift suggested with no visibility into Monday's already-
+ * known day shift and school run.
+ */
+export async function getMumMonthPlan(
+  householdId: string,
+  ownerId: string,
+  weekStarts: string[],
+): Promise<MumWeekPlan[]> {
+  const results: MumWeekPlan[] = [];
+  // undefined = read the real saved state (correct for the very first week too).
+  let chainedPriorMumShift: ShiftInterval | null | undefined = undefined;
+  for (const weekStart of weekStarts) {
+    const plan = await getMumWeekPlan(householdId, ownerId, weekStart, chainedPriorMumShift);
+    results.push(plan);
+
+    const sunday = plan.best?.days[6];
+    // A locked Sunday is already real, saved data - the next week reading it
+    // from the database (override = undefined) is exactly as accurate as
+    // threading it through here, and simpler. Only an actual PROPOSAL (an
+    // unlocked day, shift or off) needs to be threaded forward explicitly,
+    // since that's the part nothing has saved yet.
+    chainedPriorMumShift = sunday && !sunday.locked
+      ? sunday.option
+        ? { startLocal: sunday.option.startLocal, endLocal: sunday.option.endLocal }
+        : null
+      : undefined;
+  }
+  return results;
 }
 
 /**
