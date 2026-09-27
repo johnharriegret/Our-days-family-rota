@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Palette } from "lucide-react";
+import { Palette, Pencil } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { MEMBER_COLORS } from "@/lib/constants";
 import { MemberAvatar } from "@/components/memberIcon";
@@ -37,6 +37,32 @@ export function FamilyMembersSection({
     nightEndLocal: string;
   } | null>(null);
   const [colorBusy, setColorBusy] = useState(false);
+
+  // Edit an existing member's hard weekly hours requirement.
+  const [editingHoursFor, setEditingHoursFor] = useState<string | null>(null);
+  const [hoursDraft, setHoursDraft] = useState<string>("");
+  const [hoursBusy, setHoursBusy] = useState(false);
+
+  function openHoursEditor(member: FamilyMember) {
+    setEditingHoursFor(member.id);
+    setHoursDraft(member.requiredWeeklyMinutes ? String(member.requiredWeeklyMinutes / 60) : "");
+  }
+
+  async function saveHours(memberId: string) {
+    setHoursBusy(true);
+    try {
+      await apiFetch(`/api/family-members/${memberId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ requiredWeeklyMinutes: hoursDraft ? Math.round(Number(hoursDraft) * 60) : null }),
+      });
+      setEditingHoursFor(null);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setHoursBusy(false);
+    }
+  }
 
   function openColorEditor(member: FamilyMember) {
     setEditingColorsFor(member.id);
@@ -110,6 +136,16 @@ export function FamilyMembersSection({
             {m.kind === "PARENT" && (
               <button
                 className="btn btn-ghost"
+                aria-label={`Edit ${m.name}'s weekly hours`}
+                style={{ minHeight: "auto", padding: 8 }}
+                onClick={() => (editingHoursFor === m.id ? setEditingHoursFor(null) : openHoursEditor(m))}
+              >
+                <Pencil size={16} />
+              </button>
+            )}
+            {m.kind === "PARENT" && (
+              <button
+                className="btn btn-ghost"
                 aria-label={`${m.name}'s day/night colours`}
                 style={{ minHeight: "auto", padding: 8 }}
                 onClick={() => (editingColorsFor === m.id ? setEditingColorsFor(null) : openColorEditor(m))}
@@ -118,6 +154,24 @@ export function FamilyMembersSection({
               </button>
             )}
           </div>
+
+          {editingHoursFor === m.id && (
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 14 }}>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label>Hard weekly hours requirement (blank = none)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  placeholder="e.g. 36"
+                  value={hoursDraft}
+                  onChange={(e) => setHoursDraft(e.target.value)}
+                />
+              </div>
+              <button className="btn btn-primary" disabled={hoursBusy} onClick={() => saveHours(m.id)} style={{ marginBottom: 0 }}>
+                {hoursBusy ? "…" : "Save"}
+              </button>
+            </div>
+          )}
 
           {editingColorsFor === m.id && colorDraft && (
             <div style={{ padding: "10px 0 16px", borderBottom: "1px solid var(--line)", marginBottom: 4 }}>

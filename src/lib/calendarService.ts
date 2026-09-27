@@ -4,7 +4,9 @@ import {
   childcareStatus,
   homeIntervalsForDay,
   isSchoolDay,
+  pickupDutyWindows,
   resolvePatternDay,
+  subtractIntervals,
 } from "./engine";
 import { classifyShiftKind, resolveQuickShiftConfig } from "./quickShift";
 import type { ChildcareResult, DayInterval, ShiftPatternSpec } from "./engine/types";
@@ -299,10 +301,32 @@ export async function getCalendarRange(
       });
     }
 
+    // Below strictPickupAge, a sibling can never substitute for an adult
+    // specifically around that child's own school drop-off/pick-up - carve
+    // those buffer windows out of the sibling allowance, whoever else is home.
+    const strictPickupAge = childcareRule?.strictPickupAge ?? null;
+    const pickupBufferMinutes = childcareRule?.pickupBufferMinutes ?? 30;
+    let pickupWindows: DayInterval[] = [];
+    if (strictPickupAge != null) {
+      childMembers.forEach((c, i) => {
+        const age = ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null);
+        if (age == null || age >= strictPickupAge || !c.school) return;
+        pickupWindows = pickupWindows.concat(
+          pickupDutyWindows({
+            attendsSchoolToday: childSchool[i].at,
+            schoolStartMinutes: childSchool[i].start,
+            schoolEndMinutes: childSchool[i].end,
+            bufferMinutes: pickupBufferMinutes,
+          }),
+        );
+      });
+    }
+    const restrictedSupervisorHome = subtractIntervals(supervisorHome, pickupWindows);
+
     const result = childcareStatus({
       date,
       coveredIntervals: covered,
-      supervisorHome,
+      supervisorHome: restrictedSupervisorHome,
       rule: {
         maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? 180,
         appliesWeekends: childcareRule?.appliesWeekends ?? true,

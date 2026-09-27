@@ -3,13 +3,21 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/client";
 
-type Rule = { maxUnsupervisedMinutes: number; appliesWeekends: boolean; minSupervisorAge: number | null };
+type Rule = {
+  maxUnsupervisedMinutes: number;
+  appliesWeekends: boolean;
+  minSupervisorAge: number | null;
+  strictPickupAge: number | null;
+  pickupBufferMinutes: number;
+};
 
 export function ChildcareRuleSection() {
   const [rule, setRule] = useState<Rule | null>(null);
   const [hours, setHours] = useState(3);
   const [appliesWeekends, setAppliesWeekends] = useState(true);
   const [minSupervisorAge, setMinSupervisorAge] = useState<string>("13");
+  const [strictPickupAge, setStrictPickupAge] = useState<string>("");
+  const [pickupBufferMinutes, setPickupBufferMinutes] = useState(30);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -20,6 +28,8 @@ export function ChildcareRuleSection() {
         setHours(d.rule.maxUnsupervisedMinutes / 60);
         setAppliesWeekends(d.rule.appliesWeekends);
         setMinSupervisorAge(d.rule.minSupervisorAge != null ? String(d.rule.minSupervisorAge) : "");
+        setStrictPickupAge(d.rule.strictPickupAge != null ? String(d.rule.strictPickupAge) : "");
+        setPickupBufferMinutes(d.rule.pickupBufferMinutes ?? 30);
       }
     });
   }, []);
@@ -34,6 +44,8 @@ export function ChildcareRuleSection() {
           maxUnsupervisedMinutes: Math.round(hours * 60),
           appliesWeekends,
           minSupervisorAge: minSupervisorAge ? Number(minSupervisorAge) : null,
+          strictPickupAge: strictPickupAge ? Number(strictPickupAge) : null,
+          pickupBufferMinutes,
         }),
       });
       setSaved(true);
@@ -71,6 +83,35 @@ export function ChildcareRuleSection() {
           onChange={(e) => setMinSupervisorAge(e.target.value)}
         />
       </div>
+
+      <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0 14px", paddingTop: 14 }}>
+        <p style={{ color: "var(--muted)", fontSize: 13.5, marginBottom: 10 }}>
+          A young child (e.g. a toddler) can&apos;t be collected from school/nursery by an older sibling — this makes
+          sure an actual adult is always the one covering their drop-off and pick-up, whoever else is home.
+        </p>
+        <div className="field">
+          <label>Below this age, an adult (not a sibling) must do their school run (leave blank to disable)</label>
+          <input
+            type="number"
+            min={0}
+            placeholder="e.g. 5"
+            value={strictPickupAge}
+            onChange={(e) => setStrictPickupAge(e.target.value)}
+          />
+        </div>
+        {strictPickupAge && (
+          <div className="field">
+            <label>Drop-off/pick-up buffer either side of school hours (minutes)</label>
+            <input
+              type="number"
+              min={0}
+              value={pickupBufferMinutes}
+              onChange={(e) => setPickupBufferMinutes(Number(e.target.value))}
+            />
+          </div>
+        )}
+      </div>
+
       {saved && <div className="pill pill-good" style={{ marginBottom: 12 }}>Saved</div>}
       <button className="btn btn-primary btn-block" disabled={busy} onClick={save}>
         Save rule

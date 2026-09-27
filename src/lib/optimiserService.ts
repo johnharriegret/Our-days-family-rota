@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { addDays, isSchoolDay, planMumWeek, resolvePatternDay } from "./engine";
+import { addDays, isSchoolDay, pickupDutyWindows, planMumWeek, resolvePatternDay, subtractIntervals } from "./engine";
 import type {
   MumShiftOption,
   OptimiserDay,
@@ -138,6 +138,8 @@ export async function getMumWeekPlan(
   }
 
   const minSupervisorAge = childcareRule?.minSupervisorAge ?? null;
+  const strictPickupAge = childcareRule?.strictPickupAge ?? null;
+  const pickupBufferMinutes = childcareRule?.pickupBufferMinutes ?? 30;
 
   const optimiserDays: OptimiserDay[] = [];
   for (let i = 0; i < 7; i++) {
@@ -160,6 +162,7 @@ export async function getMumWeekPlan(
         start: c.school ? toMinutes(c.school.startLocal) : 0,
         end: c.school ? toMinutes(c.school.endLocal) : 0,
         dob: c.dateOfBirth ? toDateStr(c.dateOfBirth) : null,
+        hasSchool: Boolean(c.school),
       };
     });
     let schoolCover: DayInterval | null = null;
@@ -181,6 +184,25 @@ export async function getMumWeekPlan(
         }
       }
     }
+    // Below strictPickupAge, a sibling can never substitute for an adult
+    // specifically around that child's own school drop-off/pick-up - carve
+    // those buffer windows out of the sibling allowance (mirrors calendarService).
+    let pickupWindows: DayInterval[] = [];
+    if (strictPickupAge != null) {
+      for (const c of childInfo) {
+        const age = ageOn(date, c.dob);
+        if (age == null || age >= strictPickupAge || !c.hasSchool) continue;
+        pickupWindows = pickupWindows.concat(
+          pickupDutyWindows({
+            attendsSchoolToday: c.at,
+            schoolStartMinutes: c.start,
+            schoolEndMinutes: c.end,
+            bufferMinutes: pickupBufferMinutes,
+          }),
+        );
+      }
+    }
+    const restrictedSupervisorHome = subtractIntervals(supervisorHome, pickupWindows);
 
     const ownShift = shiftByKey.get(`${ownerId}|${date}`);
     let locked: OptimiserDay["locked"] = null;
@@ -204,7 +226,7 @@ export async function getMumWeekPlan(
       dadShift: other.shift,
       locked,
       schoolCover,
-      supervisorHome,
+      supervisorHome: restrictedSupervisorHome,
     });
   }
 

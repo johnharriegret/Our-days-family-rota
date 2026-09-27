@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { WeekdayPicker, weekdaysLabel } from "@/components/WeekdayPicker";
 import { parseSchoolCalendarText, type ParsedBlockType } from "@/lib/schoolImport";
@@ -97,6 +97,12 @@ export function SchoolsSection() {
   const [schoolStart, setSchoolStart] = useState("08:45");
   const [schoolEnd, setSchoolEnd] = useState("15:15");
 
+  // edit hours for an existing school
+  const [editingHoursFor, setEditingHoursFor] = useState<string | null>(null);
+  const [editStart, setEditStart] = useState("08:45");
+  const [editEnd, setEditEnd] = useState("15:15");
+  const [editBusy, setEditBusy] = useState(false);
+
   // manual term form
   const [termFormFor, setTermFormFor] = useState<string | null>(null);
   const [startDate, setStartDate] = useState("");
@@ -132,6 +138,26 @@ export function SchoolsSection() {
     setSchoolEnd("15:15");
     setAddingSchool(false);
     load();
+  }
+
+  function openHoursEditor(school: School) {
+    setEditingHoursFor(school.id);
+    setEditStart(school.startLocal);
+    setEditEnd(school.endLocal);
+  }
+
+  async function saveHours(schoolId: string) {
+    setEditBusy(true);
+    try {
+      await apiFetch(`/api/schools/${schoolId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ startLocal: editStart, endLocal: editEnd }),
+      });
+      setEditingHoursFor(null);
+      load();
+    } finally {
+      setEditBusy(false);
+    }
   }
 
   async function addTerm(schoolId: string) {
@@ -232,8 +258,36 @@ export function SchoolsSection() {
 
       {schools.map((school) => (
         <div key={school.id} style={{ marginBottom: 18 }}>
-          <div className="row-title" style={{ marginBottom: 2 }}>{school.name}</div>
-          <div className="row-sub" style={{ marginBottom: 8 }}>{school.startLocal}–{school.endLocal}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div className="row-title" style={{ marginBottom: 2 }}>{school.name}</div>
+              <div className="row-sub" style={{ marginBottom: 8 }}>{school.startLocal}–{school.endLocal}</div>
+            </div>
+            <button
+              className="btn btn-ghost"
+              aria-label={`Edit ${school.name}'s hours`}
+              style={{ minHeight: "auto", padding: 8 }}
+              onClick={() => (editingHoursFor === school.id ? setEditingHoursFor(null) : openHoursEditor(school))}
+            >
+              <Pencil size={15} />
+            </button>
+          </div>
+
+          {editingHoursFor === school.id && (
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 12 }}>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label>Day starts</label>
+                <input type="time" value={editStart} onChange={(e) => setEditStart(e.target.value)} />
+              </div>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label>Day ends</label>
+                <input type="time" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} />
+              </div>
+              <button className="btn btn-primary" disabled={editBusy} onClick={() => saveHours(school.id)} style={{ marginBottom: 0 }}>
+                {editBusy ? "…" : "Save"}
+              </button>
+            </div>
+          )}
 
           {school.terms.map((t) => (
             <div className="row" key={t.id}>

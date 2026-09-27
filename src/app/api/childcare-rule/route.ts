@@ -20,13 +20,18 @@ export async function POST(request: Request) {
   return withApi(async () => {
     const session = await requireRole("ADMIN", "PARENT");
     const body = await request.json();
-    const { maxUnsupervisedMinutes, appliesWeekends, minSupervisorAge } = body as {
+    const { maxUnsupervisedMinutes, appliesWeekends, minSupervisorAge, strictPickupAge, pickupBufferMinutes } = body as {
       maxUnsupervisedMinutes?: number;
       appliesWeekends?: boolean;
       minSupervisorAge?: number | null;
+      strictPickupAge?: number | null;
+      pickupBufferMinutes?: number;
     };
     if (!maxUnsupervisedMinutes || maxUnsupervisedMinutes < 0) {
       return apiError("maxUnsupervisedMinutes must be a positive number", 422);
+    }
+    if (pickupBufferMinutes != null && pickupBufferMinutes < 0) {
+      return apiError("pickupBufferMinutes must be a positive number", 422);
     }
     const rule = await prisma.childcareRule.create({
       data: {
@@ -34,6 +39,8 @@ export async function POST(request: Request) {
         maxUnsupervisedMinutes,
         appliesWeekends: appliesWeekends ?? true,
         minSupervisorAge: minSupervisorAge ?? null,
+        strictPickupAge: strictPickupAge ?? null,
+        pickupBufferMinutes: pickupBufferMinutes ?? 30,
       },
     });
     return NextResponse.json({ rule });

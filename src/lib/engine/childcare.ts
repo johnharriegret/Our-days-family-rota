@@ -32,6 +32,49 @@ export function uncoveredGaps(covered: DayInterval[]): DayInterval[] {
   return gaps;
 }
 
+/** `a` with every portion overlapping any interval in `b` removed. */
+export function subtractIntervals(a: DayInterval[], b: DayInterval[]): DayInterval[] {
+  const bMerged = mergeIntervals(b);
+  if (bMerged.length === 0) return mergeIntervals(a);
+  const result: DayInterval[] = [];
+  for (const seg of mergeIntervals(a)) {
+    let cursor = seg.startMinutes;
+    for (const cut of bMerged) {
+      if (cut.endMinutes <= cursor || cut.startMinutes >= seg.endMinutes) continue;
+      if (cut.startMinutes > cursor) {
+        result.push({ startMinutes: cursor, endMinutes: Math.min(cut.startMinutes, seg.endMinutes) });
+      }
+      cursor = Math.max(cursor, cut.endMinutes);
+      if (cursor >= seg.endMinutes) break;
+    }
+    if (cursor < seg.endMinutes) result.push({ startMinutes: cursor, endMinutes: seg.endMinutes });
+  }
+  return result;
+}
+
+/**
+ * The drop-off/pick-up duty windows for a child below the household's
+ * "strict pickup age": a short buffer immediately before school starts and
+ * immediately after it ends, during which only an actual adult counts as
+ * cover - a supervisor-age sibling cannot substitute (they can't do a school
+ * run). Empty when the child doesn't attend school that day: with no school
+ * run to make, the ordinary supervisor-sibling allowance applies as normal
+ * all day, per the household's own choice to scope this narrowly.
+ */
+export function pickupDutyWindows(params: {
+  attendsSchoolToday: boolean;
+  schoolStartMinutes: number;
+  schoolEndMinutes: number;
+  bufferMinutes: number;
+}): DayInterval[] {
+  if (!params.attendsSchoolToday) return [];
+  const { schoolStartMinutes, schoolEndMinutes, bufferMinutes } = params;
+  return [
+    { startMinutes: Math.max(0, schoolStartMinutes - bufferMinutes), endMinutes: schoolStartMinutes },
+    { startMinutes: schoolEndMinutes, endMinutes: Math.min(1440, schoolEndMinutes + bufferMinutes) },
+  ].filter((iv) => iv.endMinutes > iv.startMinutes);
+}
+
 function formatMinutes(minutes: number): string {
   const wrapped = ((minutes % 1440) + 1440) % 1440;
   const h = Math.floor(wrapped / 60);

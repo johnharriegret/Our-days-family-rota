@@ -237,6 +237,14 @@ model ChildcareRule {
   maxUnsupervisedMinutes Int       @default(180)
   appliesWeekends        Boolean   @default(true)
   minSupervisorAge       Int?      @default(13)
+  // Below this age, a supervisor-age sibling can never substitute for an
+  // actual adult specifically around school drop-off/pick-up (e.g. a
+  // toddler who needs to be physically taken to and collected from
+  // nursery) - null disables this extra check entirely. Outside the
+  // pickupBufferMinutes window either side of school start/end, ordinary
+  // sibling supervision still applies as normal.
+  strictPickupAge        Int?
+  pickupBufferMinutes    Int       @default(30)
   effectiveFrom          DateTime  @default(now())
 
   @@index([householdId, effectiveFrom])
