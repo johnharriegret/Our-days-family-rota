@@ -33,6 +33,10 @@ export type OptimiserDay = {
   schoolCover: DayInterval | null;
   /** minutes a supervisor-age child is home (before/after school, or all day). */
   supervisorHome: DayInterval[];
+  /** true when every school-linked child is off for a recognised holiday/
+   * INSET/bank holiday (not merely a weekend) - relaxes the morning-handover
+   * hard rule the same way calendarService's childcareForDay already does. */
+  isSchoolHoliday: boolean;
 };
 
 export type OptimiserInput = {
@@ -103,6 +107,7 @@ function dayChildcare(
     coveredIntervals: covered,
     supervisorHome: day.supervisorHome,
     rule: { ...rule, minSupervisorAge: null },
+    isSchoolHoliday: day.isSchoolHoliday,
   });
   return result.status;
 }

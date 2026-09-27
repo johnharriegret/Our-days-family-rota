@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { addDays, isSchoolDay, pickupDutyWindows, planMumWeek, resolvePatternDay, subtractIntervals } from "./engine";
+import { addDays, isSchoolDay, nonSchoolDayReason, pickupDutyWindows, planMumWeek, resolvePatternDay, subtractIntervals } from "./engine";
 import type {
   MumShiftOption,
   OptimiserDay,
@@ -49,7 +49,14 @@ type HouseholdContext = {
   activePattern: (id: string, date: string) => ShiftPatternSpec | null;
   workingInterval: (id: string, date: string) => { known: boolean; shift: ShiftInterval | null };
   shiftByKey: Map<string, { locked: boolean; shiftTypeId: string | null; customStart: string | null; customEnd: string | null; paidMinutes: number | null }>;
-  childInfoFor: (date: string) => { at: boolean; start: number; end: number; dob: string | null; hasSchool: boolean }[];
+  childInfoFor: (date: string) => {
+    at: boolean;
+    start: number;
+    end: number;
+    dob: string | null;
+    hasSchool: boolean;
+    reason: ReturnType<typeof nonSchoolDayReason>;
+  }[];
 };
 
 /**
@@ -163,12 +170,14 @@ async function loadHouseholdContext(
           weekdays: t.weekdays,
         })) ?? [];
       const at = c.school ? isSchoolDay(date, terms) : false;
+      const reason = c.school && !at ? nonSchoolDayReason(date, terms) : null;
       return {
         at,
         start: c.school ? toMinutes(c.school.startLocal) : 0,
         end: c.school ? toMinutes(c.school.endLocal) : 0,
         dob: c.dateOfBirth ? toDateStr(c.dateOfBirth) : null,
         hasSchool: Boolean(c.school),
+        reason,
       };
     });
   }
@@ -216,6 +225,16 @@ function computeWeekPlan(
       const end = Math.min(...childInfo.map((c) => c.end));
       if (end > start) schoolCover = { startMinutes: start, endMinutes: end };
     }
+    // A hard exception to the morning-handover rule: every school-linked
+    // child off for a recognised holiday/INSET/bank holiday (not merely a
+    // weekend) means there's no school run to miss (mirrors calendarService's
+    // childcareForDay, so the plan sheet and the calendar agree).
+    const schoolLinked = childInfo.filter((c) => c.hasSchool);
+    const isSchoolHoliday =
+      schoolLinked.length > 0 &&
+      schoolLinked.every(
+        (c) => c.reason?.kind === "BANK_HOLIDAY" || c.reason?.kind === "HOLIDAY" || c.reason?.kind === "INSET",
+      );
     const supervisorHome: DayInterval[] = [];
     if (minSupervisorAge != null) {
       for (const c of childInfo) {
@@ -268,6 +287,7 @@ function computeWeekPlan(
       locked,
       schoolCover,
       supervisorHome: restrictedSupervisorHome,
+      isSchoolHoliday,
     });
   }
 

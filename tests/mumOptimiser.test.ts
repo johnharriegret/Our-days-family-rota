@@ -16,6 +16,7 @@ function plainDay(date: string, over: Partial<OptimiserDay> = {}): OptimiserDay 
     locked: null,
     schoolCover: null,
     supervisorHome: [],
+    isSchoolHoliday: false,
     ...over,
   };
 }
@@ -168,6 +169,45 @@ test("works a school-hours shift on the OTHER parent's working days to free up t
   assert.equal(res.best.metrics.coupleDaytimeOff, 2);
   assert.equal(res.best.days[3].option, null); // Thu off
   assert.equal(res.best.days[4].option, null); // Fri off
+});
+
+test("flags a handover gap as a childcare conflict on an ordinary school day", () => {
+  // Dad away 00:00-10:00, Mum's candidate shift 09:00-17:00: a clean 60-minute
+  // gap (09:00-10:00) nobody covers - well within the 3-hour allowance in raw
+  // length, but it's an ordinary Tuesday, so the hard rule (mirrored from
+  // calendarService) still applies with no supervisor-age sibling or school
+  // cover configured.
+  const nineToFive: MumShiftOption = { id: "95", name: "9-5", startLocal: "09:00", endLocal: "17:00", paidMinutes: 480 };
+  const days: OptimiserDay[] = [
+    plainDay("2026-09-22", { hasChildren: true, isSchoolHoliday: false, dadShift: { startLocal: "00:00", endLocal: "10:00" } }),
+  ];
+  const res = planMumWeek({
+    days,
+    priorDadShift: null,
+    priorMumShift: null,
+    requiredMinutes: 480,
+    shiftOptions: [nineToFive],
+    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.childcareConflicts, 1);
+});
+
+test("the same gap is fine when the optimiser is told it's a school holiday", () => {
+  const nineToFive: MumShiftOption = { id: "95", name: "9-5", startLocal: "09:00", endLocal: "17:00", paidMinutes: 480 };
+  const days: OptimiserDay[] = [
+    plainDay("2026-09-22", { hasChildren: true, isSchoolHoliday: true, dadShift: { startLocal: "00:00", endLocal: "10:00" } }),
+  ];
+  const res = planMumWeek({
+    days,
+    priorDadShift: null,
+    priorMumShift: null,
+    requiredMinutes: 480,
+    shiftOptions: [nineToFive],
+    rule: { maxUnsupervisedMinutes: 180, appliesWeekends: true },
+  });
+  assert.ok(res.best);
+  assert.equal(res.best.metrics.childcareConflicts, 0);
 });
 
 // --- Minimum rest between shifts (live bug: Night straight into a Long Day) ---
