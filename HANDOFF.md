@@ -670,3 +670,74 @@ sequential round trips and a half-applied week can't exist.
   admin rights), `initdb`, run it on a spare port, `prisma migrate deploy`, and a
   `.env` holding `POSTGRES_URL` — which `tests/applyPlan.integration.test.ts`
   picks up via `process.loadEnvFile`.
+
+---
+
+## 12. Session 5 (2026-09-27, evening): timeline work is now LIVE; branch state; feature catch-up
+
+**Read this after §11 — it corrects §11.6 and records the current shipped state.**
+
+### 12.1 The continuous-timeline rebuild is merged and deployed
+§11.6 said the rebuild was committed but "not pushed and not merged." That is now
+out of date. It **is on `main` as commit `21b2b58` ("Reason over one continuous
+timeline, not a day or a week at a time") and is LIVE in production** (Vercel
+production deployment READY, no runtime errors in the logs; `vercel-build` ran
+`prisma migrate deploy`, so `20260927190000_add_school_run_morning_from` is
+applied to the live database). `evaluateTimeline` / `buildTimelineDay` /
+`segments.ts` are the live validator; `childcareStatus` and `coverage.ts` remain
+deleted — do not reintroduce a day-level judge.
+
+### 12.2 Current branch state (IMPORTANT)
+- `main` = `21b2b58` (live).
+- Designated dev branch **`claude/gret-residence-rota-complete-xv4094` is reset to
+  equal `main`** (`21b2b58`). Develop there, then mirror to `main` to deploy.
+- **`git fetch origin main` before every push to `main`.** A parallel session
+  pushed `21b2b58` onto `main` mid-work this session, causing a divergence. It was
+  resolved by adopting `main` and dropping the divergent commit — never force-push
+  over another author's work.
+
+### 12.3 Features that landed on `main` this session (history `1a584ca`..`c4671d3`, below `21b2b58`)
+All live. Not all were written up individually before now — this is the catch-up:
+- Mobile Month grid overflow fixed (`grid-template-columns: repeat(7, minmax(0,1fr))`
+  + `min-width:0`; do not revert to bare `1fr`).
+- Customisable **"days off together" colour** — Settings → Appearance, stored in
+  `FamilySettings.data.togetherColor` (`/api/settings/appearance`), default yellow.
+- **Per-member logins** — `/api/users` (POST create, admin-only) + `/api/users/[id]`
+  (DELETE), key-icon UI in `FamilyMembersSection`. Lets e.g. Jeanicar sign in with
+  her own credentials instead of sharing the admin's.
+- **"Plan the year"** button on the Month page (next to "Plan the month"): runs the
+  planner across the next 12 months in one request.
+- Optimiser loads household data **once per request** (`loadHouseholdContext` +
+  pure `computeWeekPlan`), so year-scale planning is a few queries, not hundreds.
+- Plan sheet shows the other parent's own Day/Night/Off in an aligned column with a
+  single `HG`-style initials header (`src/lib/initials.ts`).
+- School delete (`/api/schools/[id]` DELETE; FK is `ON DELETE SET NULL`), child
+  "Home · <reason>" labels (half term / INSET / weekend / bank holiday), and
+  variable-parent unfilled days defaulting to "Off".
+
+### 12.4 A safety-first optimiser commit was made, then correctly discarded
+Before `21b2b58` was noticed on `main`, this session also wrote a smaller
+"childcare safety as the top ranking key + block Apply on unsafe" change on the
+**old** architecture (the one that still used `childcareStatus`). `21b2b58`
+already does all of that (and far more) the right way, and it deletes the files
+that change was built on, so the smaller commit was dropped and the dev branch
+reset to `main`. Nothing of value was lost — do not try to resurrect it.
+
+### 12.5 `npm test` in a DB-less sandbox
+Expect **114 pass + 2 fail** where the 2 are `tests/applyPlan.integration.test.ts`.
+That test only truly skips when `POSTGRES_URL` is unset. If a leftover `.env`
+points `POSTGRES_URL` at a local Postgres (per §11.6's recipe) that isn't running
+in your environment, the test tries to connect and fails on `127.0.0.1:5433`.
+That is environmental, not a regression — all 114 pure-logic tests pass. To run
+it for real, stand up the local Postgres per §11.6.
+
+### 12.6 Still open
+- **Phase 2 of the scheduler brief** — the independent CodeRabbit audit (§11.6) —
+  still not done.
+- Optional developer diagnostics on the optimiser (per-run candidate counts:
+  total / safe / rejected) to make "no safe plan" provable in the UI. Not required
+  for correctness.
+- Childcare tuning for the Grets: to force an adult (not the 13-year-old) around
+  the youngest's morning routine, set Settings → Childcare rule → "below this age
+  an adult must do the school run" above the youngest's age; `schoolRunMorningFromLocal`
+  controls when the morning duty starts.
