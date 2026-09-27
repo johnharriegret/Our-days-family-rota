@@ -12,9 +12,19 @@ const PRESETS = [
   { name: "Night", startLocal: "20:00", endLocal: "08:00", paidMinutes: 690 },
 ];
 
-export function ShiftTypesSection({ parents }: { parents: FamilyMember[] }) {
+export function ShiftTypesSection({
+  parents,
+  initialShiftTypesByOwnerId,
+}: {
+  parents: FamilyMember[];
+  /** Every parent's shift types, already loaded by the Settings page - used
+   * to seed the initial view with no fetch, including when the dropdown
+   * switches to a different parent. A fresh fetch still happens after adding
+   * or removing a type, straight from the source of truth. */
+  initialShiftTypesByOwnerId: Record<string, ShiftType[]>;
+}) {
   const [ownerId, setOwnerId] = useState(parents[0]?.id ?? "");
-  const [types, setTypes] = useState<ShiftType[]>([]);
+  const [types, setTypes] = useState<ShiftType[]>(initialShiftTypesByOwnerId[parents[0]?.id ?? ""] ?? []);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [startLocal, setStartLocal] = useState("07:00");
@@ -23,11 +33,16 @@ export function ShiftTypesSection({ parents }: { parents: FamilyMember[] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Switching parent needs no round trip - every parent's types are already
+  // loaded. Only a save/delete (via load() below) hits the network.
+  useEffect(() => {
+    setTypes(initialShiftTypesByOwnerId[ownerId] ?? []);
+  }, [ownerId, initialShiftTypesByOwnerId]);
+
   function load() {
     if (!ownerId) return;
     apiFetch<{ types: ShiftType[] }>(`/api/shift-types?ownerId=${ownerId}`).then((d) => setTypes(d.types));
   }
-  useEffect(load, [ownerId]);
 
   async function addType(preset?: (typeof PRESETS)[number]) {
     setBusy(true);

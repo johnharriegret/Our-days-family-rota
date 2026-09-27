@@ -5,22 +5,31 @@ import { apiFetch } from "@/lib/client";
 import { FamilyMembersSection } from "@/components/settings/FamilyMembersSection";
 import { PatternEditorSection } from "@/components/settings/PatternEditorSection";
 import { ShiftTypesSection } from "@/components/settings/ShiftTypesSection";
-import { SchoolsSection } from "@/components/settings/SchoolsSection";
-import { ChildcareRuleSection } from "@/components/settings/ChildcareRuleSection";
-import type { FamilyMember } from "@/lib/clientTypes";
+import { SchoolsSection, type SchoolWithTerms } from "@/components/settings/SchoolsSection";
+import { ChildcareRuleSection, type ChildcareRule } from "@/components/settings/ChildcareRuleSection";
+import type { FamilyMember, ShiftType } from "@/lib/clientTypes";
 
+type Pattern = { anchor: string; blocks: { kind: string; count: number; startLocal: string | null; endLocal: string | null }[] };
+
+type Bootstrap = {
+  members: FamilyMember[];
+  schools: SchoolWithTerms[];
+  childcareRule: ChildcareRule | null;
+  patternsByOwnerId: Record<string, Pattern>;
+  shiftTypesByOwnerId: Record<string, ShiftType[]>;
+};
+
+// Everything Settings needs, in one request - see the route's own comment for
+// why (this used to be 5-6 separate API calls firing on every page open,
+// each its own cold Prisma/Postgres round trip, which is what made Settings
+// slow to load in practice).
 export default function SettingsPage() {
-  const [members, setMembers] = useState<FamilyMember[]>([]);
-  const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
+  const [data, setData] = useState<Bootstrap | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    const [m, s] = await Promise.all([
-      apiFetch<{ members: FamilyMember[] }>("/api/family-members"),
-      apiFetch<{ schools: { id: string; name: string }[] }>("/api/schools"),
-    ]);
-    setMembers(m.members);
-    setSchools(s.schools);
+    const bootstrap = await apiFetch<Bootstrap>("/api/settings/bootstrap");
+    setData(bootstrap);
     setLoading(false);
   }, []);
 
@@ -28,17 +37,17 @@ export default function SettingsPage() {
     load();
   }, [load]);
 
-  const parents = members.filter((m) => m.kind === "PARENT");
+  if (loading || !data) return <div className="page-body empty-state">Loading…</div>;
 
-  if (loading) return <div className="page-body empty-state">Loading…</div>;
+  const parents = data.members.filter((m) => m.kind === "PARENT");
 
   return (
     <div className="page-body">
-      <FamilyMembersSection members={members} schools={schools} onChanged={load} />
-      <PatternEditorSection parents={parents} />
-      <ShiftTypesSection parents={parents} />
-      <SchoolsSection />
-      <ChildcareRuleSection />
+      <FamilyMembersSection members={data.members} schools={data.schools} onChanged={load} />
+      <PatternEditorSection parents={parents} initialPatternsByOwnerId={data.patternsByOwnerId} />
+      <ShiftTypesSection parents={parents} initialShiftTypesByOwnerId={data.shiftTypesByOwnerId} />
+      <SchoolsSection initialSchools={data.schools} onChanged={load} />
+      <ChildcareRuleSection initialRule={data.childcareRule} onChanged={load} />
     </div>
   );
 }

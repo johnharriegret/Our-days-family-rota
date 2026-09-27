@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/client";
 
-type Rule = {
+export type ChildcareRule = {
   maxUnsupervisedMinutes: number;
   appliesWeekends: boolean;
   minSupervisorAge: number | null;
@@ -11,28 +11,44 @@ type Rule = {
   pickupBufferMinutes: number;
 };
 
-export function ChildcareRuleSection() {
-  const [rule, setRule] = useState<Rule | null>(null);
-  const [hours, setHours] = useState(3);
-  const [appliesWeekends, setAppliesWeekends] = useState(true);
-  const [minSupervisorAge, setMinSupervisorAge] = useState<string>("13");
-  const [strictPickupAge, setStrictPickupAge] = useState<string>("");
-  const [pickupBufferMinutes, setPickupBufferMinutes] = useState(30);
+function draftFrom(rule: ChildcareRule | null) {
+  return {
+    hours: rule ? rule.maxUnsupervisedMinutes / 60 : 3,
+    appliesWeekends: rule?.appliesWeekends ?? true,
+    minSupervisorAge: rule?.minSupervisorAge != null ? String(rule.minSupervisorAge) : "13",
+    strictPickupAge: rule?.strictPickupAge != null ? String(rule.strictPickupAge) : "",
+    pickupBufferMinutes: rule?.pickupBufferMinutes ?? 30,
+  };
+}
+
+export function ChildcareRuleSection({
+  initialRule,
+  onChanged,
+}: {
+  /** Already loaded by the Settings page - no fetch needed on mount. */
+  initialRule: ChildcareRule | null;
+  /** Called after saving, so the Settings page's own bootstrap stays in sync. */
+  onChanged: () => void;
+}) {
+  const [rule, setRule] = useState(initialRule);
+  const draft0 = draftFrom(initialRule);
+  const [hours, setHours] = useState(draft0.hours);
+  const [appliesWeekends, setAppliesWeekends] = useState(draft0.appliesWeekends);
+  const [minSupervisorAge, setMinSupervisorAge] = useState(draft0.minSupervisorAge);
+  const [strictPickupAge, setStrictPickupAge] = useState(draft0.strictPickupAge);
+  const [pickupBufferMinutes, setPickupBufferMinutes] = useState(draft0.pickupBufferMinutes);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    apiFetch<{ rule: Rule | null }>("/api/childcare-rule").then((d) => {
-      if (d.rule) {
-        setRule(d.rule);
-        setHours(d.rule.maxUnsupervisedMinutes / 60);
-        setAppliesWeekends(d.rule.appliesWeekends);
-        setMinSupervisorAge(d.rule.minSupervisorAge != null ? String(d.rule.minSupervisorAge) : "");
-        setStrictPickupAge(d.rule.strictPickupAge != null ? String(d.rule.strictPickupAge) : "");
-        setPickupBufferMinutes(d.rule.pickupBufferMinutes ?? 30);
-      }
-    });
-  }, []);
+    setRule(initialRule);
+    const d = draftFrom(initialRule);
+    setHours(d.hours);
+    setAppliesWeekends(d.appliesWeekends);
+    setMinSupervisorAge(d.minSupervisorAge);
+    setStrictPickupAge(d.strictPickupAge);
+    setPickupBufferMinutes(d.pickupBufferMinutes);
+  }, [initialRule]);
 
   async function save() {
     setBusy(true);
@@ -49,6 +65,7 @@ export function ChildcareRuleSection() {
         }),
       });
       setSaved(true);
+      onChanged();
     } finally {
       setBusy(false);
     }

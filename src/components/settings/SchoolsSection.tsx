@@ -8,6 +8,7 @@ import { parseSchoolCalendarText, type ParsedBlockType } from "@/lib/schoolImpor
 
 type Term = { id: string; startDate: string; endDate: string; type: string; label: string; weekdays: number[] };
 type School = { id: string; name: string; startLocal: string; endLocal: string; terms: Term[] };
+export type SchoolWithTerms = School;
 
 const TERM_TYPES = [
   { value: "TERM", label: "Term (school days)" },
@@ -90,8 +91,20 @@ async function fileToApiPayload(file: File): Promise<{ base64: string; mimeType:
   throw new Error("Couldn't shrink that photo enough to upload. Try a lower-resolution photo.");
 }
 
-export function SchoolsSection() {
-  const [schools, setSchools] = useState<School[]>([]);
+export function SchoolsSection({
+  initialSchools,
+  onChanged,
+}: {
+  /** Already loaded by the Settings page - avoids a duplicate fetch on mount
+   * (this component used to independently re-fetch the exact same data the
+   * page had already loaded a moment earlier). */
+  initialSchools: School[];
+  /** Called after any save here, so the Settings page's own bootstrap (and
+   * anything else built from it, like the family-member school picker)
+   * stays in sync. */
+  onChanged: () => void;
+}) {
+  const [schools, setSchools] = useState<School[]>(initialSchools);
   const [addingSchool, setAddingSchool] = useState(false);
   const [schoolName, setSchoolName] = useState("");
   const [schoolStart, setSchoolStart] = useState("08:45");
@@ -122,10 +135,12 @@ export function SchoolsSection() {
   const [visionBusy, setVisionBusy] = useState(false);
   const [visionError, setVisionError] = useState<string | null>(null);
 
-  function load() {
-    apiFetch<{ schools: School[] }>("/api/schools").then((d) => setSchools(d.schools));
-  }
-  useEffect(load, []);
+  // The Settings page re-fetches everything (including schools) after any
+  // change anywhere in Settings, so a save here just asks it to refresh
+  // rather than this component also independently re-fetching the same data.
+  useEffect(() => {
+    setSchools(initialSchools);
+  }, [initialSchools]);
 
   async function addSchool() {
     if (!schoolName.trim()) return;
@@ -137,7 +152,7 @@ export function SchoolsSection() {
     setSchoolStart("08:45");
     setSchoolEnd("15:15");
     setAddingSchool(false);
-    load();
+    onChanged();
   }
 
   function openHoursEditor(school: School) {
@@ -154,7 +169,7 @@ export function SchoolsSection() {
         body: JSON.stringify({ startLocal: editStart, endLocal: editEnd }),
       });
       setEditingHoursFor(null);
-      load();
+      onChanged();
     } finally {
       setEditBusy(false);
     }
@@ -174,12 +189,12 @@ export function SchoolsSection() {
     setWeekdays(MON_FRI);
     setType("TERM");
     setTermFormFor(null);
-    load();
+    onChanged();
   }
 
   async function removeTerm(id: string) {
     await apiFetch(`/api/terms/${id}`, { method: "DELETE" });
-    load();
+    onChanged();
   }
 
   function analyse() {
@@ -236,7 +251,7 @@ export function SchoolsSection() {
       setReview(null);
       setUnrecognised([]);
       setVisionError(null);
-      load();
+      onChanged();
     } finally {
       setBusy(false);
     }

@@ -17,7 +17,16 @@ const PRESET_DDDD_NNNN: Block[] = [
   { kind: "O", count: 4, startLocal: null, endLocal: null },
 ];
 
-export function PatternEditorSection({ parents }: { parents: FamilyMember[] }) {
+export function PatternEditorSection({
+  parents,
+  initialPatternsByOwnerId,
+}: {
+  parents: FamilyMember[];
+  /** Every parent's current pattern, already loaded by the Settings page -
+   * looked up locally instead of a fetch per owner, including when the
+   * dropdown switches to a different parent (no round trip needed either way). */
+  initialPatternsByOwnerId: Record<string, Pattern>;
+}) {
   const [ownerId, setOwnerId] = useState(parents[0]?.id ?? "");
   const [anchor, setAnchor] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -27,12 +36,11 @@ export function PatternEditorSection({ parents }: { parents: FamilyMember[] }) {
 
   useEffect(() => {
     if (!ownerId) return;
-    apiFetch<{ pattern: Pattern }>(`/api/patterns?ownerId=${ownerId}`).then((d) => {
-      setAnchor(d.pattern?.anchor ?? "");
-      setBlocks(d.pattern?.blocks ?? []);
-      setSaved(false);
-    });
-  }, [ownerId]);
+    const pattern = initialPatternsByOwnerId[ownerId] ?? null;
+    setAnchor(pattern?.anchor ?? "");
+    setBlocks(pattern?.blocks ?? []);
+    setSaved(false);
+  }, [ownerId, initialPatternsByOwnerId]);
 
   function updateBlock(index: number, patch: Partial<Block>) {
     setBlocks((prev) => prev.map((b, i) => (i === index ? { ...b, ...patch } : b)));
