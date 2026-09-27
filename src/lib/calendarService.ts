@@ -6,6 +6,7 @@ import {
   isSchoolDay,
   resolvePatternDay,
 } from "./engine";
+import { classifyShiftKind, resolveQuickShiftConfig } from "./quickShift";
 import type { ChildcareResult, DayInterval, ShiftPatternSpec } from "./engine/types";
 
 function toDateStr(d: Date): string {
@@ -39,6 +40,8 @@ export type MemberDayEntry = {
   isOff: boolean;
   locked: boolean;
   source: "PATTERN" | "MANUAL" | "SCHOOL" | "NONE";
+  /** A parent's quick-fill day/night colour for a working day; null when off/not applicable. */
+  displayColor: string | null;
 };
 
 export type CalendarEventEntry = {
@@ -346,10 +349,18 @@ export async function getCalendarRange(
           isOff: !atSchool,
           locked: false,
           source: "SCHOOL",
+          displayColor: null,
         };
       }
 
       const pd = parentWorkFor(member.id, date);
+      const quickShift = resolveQuickShiftConfig(member);
+      const displayColor =
+        pd.working && pd.startLocal && pd.endLocal
+          ? classifyShiftKind(pd.startLocal, pd.endLocal) === "NIGHT"
+            ? quickShift.nightColor
+            : quickShift.dayColor
+          : null;
       return {
         memberId: member.id,
         name: member.name,
@@ -362,6 +373,7 @@ export async function getCalendarRange(
         isOff: !pd.working,
         locked: pd.locked,
         source: pd.source,
+        displayColor,
       };
     });
 

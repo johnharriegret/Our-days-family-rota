@@ -9,6 +9,12 @@ export type FamilyMember = {
   dateOfBirth: string | null;
   schoolId: string | null;
   requiredWeeklyMinutes: number | null;
+  dayColor?: string | null;
+  nightColor?: string | null;
+  dayStartLocal?: string | null;
+  dayEndLocal?: string | null;
+  nightStartLocal?: string | null;
+  nightEndLocal?: string | null;
 };
 
 export type ShiftType = {
@@ -33,6 +39,7 @@ export type MemberDayEntry = {
   isOff: boolean;
   locked: boolean;
   source: "PATTERN" | "MANUAL" | "SCHOOL" | "NONE";
+  displayColor: string | null;
 };
 
 export type CalendarEventEntry = {

@@ -104,7 +104,7 @@ export default function WeekPage() {
               </div>
               {day.members.map((m) => (
                 <div className="row" key={m.memberId}>
-                  <MemberAvatar icon={m.icon} colorToken={m.colorToken} size={16} />
+                  <MemberAvatar icon={m.icon} colorToken={m.colorToken} size={16} color={m.displayColor} />
                   <div>
                     <div className="row-title" style={{ fontSize: 14 }}>{m.name}</div>
                     <div className="row-sub">{m.label}</div>

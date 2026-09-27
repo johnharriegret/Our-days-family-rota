@@ -85,6 +85,18 @@ model FamilyMember {
   icon        String
   archived    Boolean     @default(false)
   requiredWeeklyMinutes Int? // e.g. 2250 for a hard 37.5h/week requirement; null = no fixed requirement
+  // Quick-fill defaults for the Month calendar's paint tool (a PARENT only):
+  // the colour and canonical start/end time used when someone paints a "Day"
+  // or "Night" shift straight onto the calendar, without picking a named
+  // shift type. Null = fall back to a sensible computed default (see
+  // src/lib/quickShift.ts) rather than leaving the feature unusable before
+  // anyone has visited Settings.
+  dayColor        String?
+  nightColor      String?
+  dayStartLocal   String?
+  dayEndLocal     String?
+  nightStartLocal String?
+  nightEndLocal   String?
   user        User?
   patterns    ShiftPattern[]
   shiftTypes  ShiftType[]

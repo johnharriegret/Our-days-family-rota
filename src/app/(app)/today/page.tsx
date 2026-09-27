@@ -70,7 +70,7 @@ export default function TodayPage() {
         <h2>Today · {friendlyDate(today.date)}</h2>
         {today.members.map((m) => (
           <div className="row" key={m.memberId}>
-            <MemberAvatar icon={m.icon} colorToken={m.colorToken} />
+            <MemberAvatar icon={m.icon} colorToken={m.colorToken} color={m.displayColor} />
             <div>
               <div className="row-title">{m.name}</div>
               <div className="row-sub">{m.label}</div>

@@ -1,11 +1,34 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { Brush, Check, ChevronLeft, ChevronRight, Sparkles, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
-import type { CalendarDayView } from "@/lib/clientTypes";
+import { MemberAvatar } from "@/components/memberIcon";
+import { resolveQuickShiftConfig } from "@/lib/quickShift";
+import type { CalendarDayView, FamilyMember } from "@/lib/clientTypes";
+
+type QuickFillAction = "DAY" | "NIGHT" | "OFF" | "HOLIDAY";
+
+const ACTION_LABELS: Record<QuickFillAction, string> = {
+  DAY: "Days",
+  NIGHT: "Nights",
+  OFF: "Off",
+  HOLIDAY: "Holiday",
+};
+
+function toMinutesOfDay(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function shiftDurationMinutes(start: string, end: string): number {
+  const s = toMinutesOfDay(start);
+  let e = toMinutesOfDay(end);
+  if (e <= s) e += 1440; // overnight
+  return e - s;
+}
 
 function todayStr(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -62,6 +85,90 @@ export default function MonthPage() {
   const [days, setDays] = useState<CalendarDayView[]>([]);
   const [loading, setLoading] = useState(true);
   const [showPlan, setShowPlan] = useState(false);
+
+  // --- Quick fill (paint) tool -------------------------------------------
+  const [quickFillOn, setQuickFillOn] = useState(false);
+  const [parents, setParents] = useState<FamilyMember[]>([]);
+  const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
+  const [selectedAction, setSelectedAction] = useState<QuickFillAction | null>(null);
+  const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction }>>(new Map());
+  const [saving, setSaving] = useState(false);
+  const [quickFillError, setQuickFillError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ members: FamilyMember[] }>("/api/family-members").then((d) =>
+      setParents(d.members.filter((m) => m.kind === "PARENT")),
+    );
+  }, []);
+
+  function startQuickFill() {
+    setQuickFillOn(true);
+    setSelectedOwnerId(null);
+    setSelectedAction(null);
+    setPending(new Map());
+    setQuickFillError(null);
+  }
+
+  function cancelQuickFill() {
+    setQuickFillOn(false);
+    setSelectedOwnerId(null);
+    setSelectedAction(null);
+    setPending(new Map());
+    setQuickFillError(null);
+  }
+
+  function tapDate(date: string) {
+    if (!quickFillOn || !selectedOwnerId || !selectedAction) return;
+    setPending((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(date);
+      if (existing && existing.ownerId === selectedOwnerId && existing.action === selectedAction) {
+        next.delete(date); // tapping the same date again undoes it
+      } else {
+        next.set(date, { ownerId: selectedOwnerId, action: selectedAction });
+      }
+      return next;
+    });
+  }
+
+  function pendingColor(mark: { ownerId: string; action: QuickFillAction }): string {
+    const member = parents.find((p) => p.id === mark.ownerId);
+    if (mark.action === "OFF") return "var(--muted)";
+    if (mark.action === "HOLIDAY") return "var(--family)";
+    if (!member) return "var(--accent)";
+    const cfg = resolveQuickShiftConfig(member);
+    return mark.action === "NIGHT" ? cfg.nightColor : cfg.dayColor;
+  }
+
+  async function saveQuickFill() {
+    setSaving(true);
+    setQuickFillError(null);
+    try {
+      for (const [date, mark] of pending) {
+        const member = parents.find((p) => p.id === mark.ownerId);
+        if (!member) continue;
+        const cfg = resolveQuickShiftConfig(member);
+        let payload: Record<string, unknown> = { ownerId: mark.ownerId, date, shiftTypeId: null };
+        if (mark.action === "DAY") {
+          payload = { ...payload, customStart: cfg.dayStartLocal, customEnd: cfg.dayEndLocal, paidMinutes: shiftDurationMinutes(cfg.dayStartLocal, cfg.dayEndLocal) };
+        } else if (mark.action === "NIGHT") {
+          payload = { ...payload, customStart: cfg.nightStartLocal, customEnd: cfg.nightEndLocal, paidMinutes: shiftDurationMinutes(cfg.nightStartLocal, cfg.nightEndLocal) };
+        } else if (mark.action === "HOLIDAY") {
+          payload = { ...payload, customStart: null, customEnd: null, note: "Annual leave" };
+        } else {
+          payload = { ...payload, customStart: null, customEnd: null };
+        }
+        await apiFetch("/api/shifts", { method: "POST", body: JSON.stringify(payload) });
+      }
+      cancelQuickFill();
+      emitCalendarChanged();
+    } catch (err) {
+      setQuickFillError(err instanceof Error ? err.message : "Couldn't save some of those changes");
+    } finally {
+      setSaving(false);
+    }
+  }
+  // -------------------------------------------------------------------------
 
   const load = useCallback(async () => {
     const last = daysInMonth(monthStart);
@@ -129,12 +236,19 @@ export default function MonthPage() {
             const hasConflict = day.childcare?.status === "CHILDCARE_NEEDED";
             const titleLines = day.members.map((m) => `${m.name}: ${m.label}`);
             if (hasConflict && day.childcare) titleLines.push(`⚠ ${day.childcare.explanation}`);
+            const mark = pending.get(day.date);
+            const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction);
             return (
               <div
                 key={day.date}
                 className={`month-cell${day.bothParentsOff ? " together" : ""}${hasConflict ? " conflict" : ""}`}
-                style={isToday ? { outline: "2px solid var(--accent)" } : undefined}
+                style={{
+                  ...(isToday ? { outline: "2px solid var(--accent)" } : undefined),
+                  ...(mark ? { boxShadow: `inset 0 0 0 3px ${pendingColor(mark)}` } : undefined),
+                  ...(canPaint ? { cursor: "pointer" } : undefined),
+                }}
                 title={titleLines.join("\n")}
+                onClick={canPaint ? () => tapDate(day.date) : undefined}
               >
                 <span>{dayNum}</span>
                 <div className="dot-row">
@@ -144,10 +258,23 @@ export default function MonthPage() {
                       <span
                         key={m.memberId}
                         className="dot"
-                        style={{ background: `var(--${m.colorToken})` }}
+                        style={{ background: m.displayColor ?? `var(--${m.colorToken})` }}
                       />
                     ))}
                 </div>
+                {mark && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 3,
+                      right: 3,
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: pendingColor(mark),
+                    }}
+                  />
+                )}
               </div>
             );
           })}
@@ -156,6 +283,97 @@ export default function MonthPage() {
       <p style={{ color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
         Tap and hold a day to see who&apos;s doing what. Pink = both parents off · red dot = childcare needed.
       </p>
+
+      {/* Quick-fill (paint) tool: pick a person, pick Days/Nights/Off/Holiday,
+          then tap dates above to mark them - tap again to undo - then Save. */}
+      {parents.length > 0 && (
+        <div className="card" style={{ marginTop: 4 }}>
+          {!quickFillOn ? (
+            <button
+              className="btn btn-secondary btn-block"
+              onClick={startQuickFill}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+            >
+              <Brush size={17} /> Quick fill — paint shifts straight onto the calendar
+            </button>
+          ) : (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <strong style={{ fontSize: 14 }}>Quick fill</strong>
+                <button className="btn btn-ghost" aria-label="Close quick fill" style={{ padding: 6, minHeight: "auto" }} onClick={cancelQuickFill}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              {quickFillError && <div className="error-banner">{quickFillError}</div>}
+
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>Who?</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+                {parents.map((p) => (
+                  <button
+                    key={p.id}
+                    className="choice-btn"
+                    style={selectedOwnerId === p.id ? { borderColor: "var(--accent)", background: "var(--accent-soft)" } : undefined}
+                    onClick={() => setSelectedOwnerId(p.id)}
+                  >
+                    <MemberAvatar icon={p.icon} colorToken={p.colorToken} size={18} />
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+
+              {selectedOwnerId && (
+                <>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>What?</div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+                    {(Object.keys(ACTION_LABELS) as QuickFillAction[]).map((action) => {
+                      const member = parents.find((p) => p.id === selectedOwnerId)!;
+                      const cfg = resolveQuickShiftConfig(member);
+                      const swatch = action === "DAY" ? cfg.dayColor : action === "NIGHT" ? cfg.nightColor : action === "HOLIDAY" ? "var(--family)" : "var(--muted)";
+                      const active = selectedAction === action;
+                      return (
+                        <button
+                          key={action}
+                          className="choice-btn"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            ...(active ? { borderColor: swatch, background: `${swatch}22`, color: swatch } : undefined),
+                          }}
+                          onClick={() => setSelectedAction(action)}
+                        >
+                          <span style={{ width: 10, height: 10, borderRadius: "50%", background: swatch, flexShrink: 0 }} />
+                          {ACTION_LABELS[action]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {selectedOwnerId && selectedAction && (
+                <p style={{ color: "var(--muted)", fontSize: 12.5, marginBottom: 12 }}>
+                  Tap dates above to mark them {ACTION_LABELS[selectedAction].toLowerCase()} — tap a marked date again to
+                  undo it. {pending.size > 0 ? `${pending.size} marked. ` : ""}Nothing changes until you save.
+                </p>
+              )}
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" onClick={cancelQuickFill}>Cancel</button>
+                <button
+                  className="btn btn-primary"
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  disabled={saving || pending.size === 0}
+                  onClick={saveQuickFill}
+                >
+                  <Check size={16} /> {saving ? "Saving…" : `Save${pending.size > 0 ? ` ${pending.size}` : ""}`}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
