@@ -33,35 +33,40 @@ export type MumWeekPlan = OptimiserResult & {
   requiredMinutes: number | null;
 };
 
+type HouseholdContext = {
+  owner: { id: string; name: string; requiredWeeklyMinutes: number | null } | null;
+  otherParent: { id: string; name: string } | null;
+  hasChildren: boolean;
+  childcareRule: {
+    maxUnsupervisedMinutes: number | null;
+    appliesWeekends: boolean | null;
+    minSupervisorAge: number | null;
+    strictPickupAge: number | null;
+    pickupBufferMinutes: number | null;
+  } | null;
+  shiftOptions: MumShiftOption[];
+  shiftTypeById: Map<string, { startLocal: string; endLocal: string; paidMinutes: number; name: string }>;
+  activePattern: (id: string, date: string) => ShiftPatternSpec | null;
+  workingInterval: (id: string, date: string) => { known: boolean; shift: ShiftInterval | null };
+  shiftByKey: Map<string, { locked: boolean; shiftTypeId: string | null; customStart: string | null; customEnd: string | null; paidMinutes: number | null }>;
+  childInfoFor: (date: string) => { at: boolean; start: number; end: number; dob: string | null; hasSchool: boolean }[];
+};
+
 /**
- * Gathers a household's real data for the week and runs the deterministic
- * shift optimiser (spec §6). Read-only: it returns recommendations, it never
- * writes shifts.
+ * Loads everything needed to plan any number of weeks for one owner, in one
+ * batch of queries covering the WHOLE requested date range - not one query
+ * batch per week. Planning a single week and planning a whole year go
+ * through the exact same function; the year just asks for a wider range.
  */
-export async function getMumWeekPlan(
+async function loadHouseholdContext(
   householdId: string,
   ownerId: string,
-  weekStart: string,
-  /**
-   * Overrides what the day before this week looked like for this owner,
-   * instead of reading it from the database. Used when planning several
-   * consecutive weeks in one go (see getMumMonthPlan below): a week's own
-   * suggested-but-not-yet-applied Sunday shift wouldn't otherwise be visible
-   * to the next week's plan at all, since nothing's been saved yet. Pass
-   * `undefined` (the default) to read the real saved state as normal, or
-   * `null` explicitly for "the day before was a proposed day off".
-   */
-  priorMumShiftOverride?: ShiftInterval | null,
-): Promise<MumWeekPlan> {
+  rangeStart: string,
+  rangeEnd: string,
+): Promise<HouseholdContext> {
   const owner = await prisma.familyMember.findFirst({
     where: { id: ownerId, householdId, kind: "PARENT" },
   });
-  if (!owner) {
-    return { best: null, alternatives: [], message: "That person isn't a parent in this household.", ownerId, ownerName: "", otherParentName: null, weekStart, requiredMinutes: null };
-  }
-
-  const weekEnd = addDays(weekStart, 6);
-  const rangeStart = addDays(weekStart, -1); // one day back for overnight spill
 
   const otherParents = await prisma.familyMember.findMany({
     where: { householdId, kind: "PARENT", archived: false, id: { not: ownerId } },
@@ -88,7 +93,6 @@ export async function getMumWeekPlan(
     paidMinutes: t.paidMinutes,
   }));
 
-  // Patterns (all versions) for anyone whose worked days we need to resolve.
   const relevantIds = [ownerId, ...(otherParent ? [otherParent.id] : [])];
   const patterns = await prisma.shiftPattern.findMany({
     where: { householdId, ownerId: { in: relevantIds } },
@@ -122,12 +126,11 @@ export async function getMumWeekPlan(
     where: {
       householdId,
       ownerId: { in: relevantIds },
-      date: { gte: new Date(`${rangeStart}T00:00:00.000Z`), lte: new Date(`${weekEnd}T00:00:00.000Z`) },
+      date: { gte: new Date(`${rangeStart}T00:00:00.000Z`), lte: new Date(`${rangeEnd}T00:00:00.000Z`) },
     },
   });
   const shiftByKey = new Map(shifts.map((s) => [`${s.ownerId}|${toDateStr(s.date)}`, s]));
 
-  // Resolve a parent's working interval for a date (manual shift wins, then rota).
   function workingInterval(id: string, date: string): { known: boolean; shift: ShiftInterval | null } {
     const manual = shiftByKey.get(`${id}|${date}`);
     if (manual) {
@@ -149,17 +152,8 @@ export async function getMumWeekPlan(
     return { known: false, shift: null };
   }
 
-  const minSupervisorAge = childcareRule?.minSupervisorAge ?? null;
-  const strictPickupAge = childcareRule?.strictPickupAge ?? null;
-  const pickupBufferMinutes = childcareRule?.pickupBufferMinutes ?? 30;
-
-  const optimiserDays: OptimiserDay[] = [];
-  for (let i = 0; i < 7; i++) {
-    const date = addDays(weekStart, i);
-
-    const other = otherParent ? workingInterval(otherParent.id, date) : { known: true, shift: null };
-
-    const childInfo = children.map((c) => {
+  function childInfoFor(date: string) {
+    return children.map((c) => {
       const terms =
         c.school?.terms.map((t) => ({
           startDate: toDateStr(t.startDate),
@@ -177,13 +171,51 @@ export async function getMumWeekPlan(
         hasSchool: Boolean(c.school),
       };
     });
+  }
+
+  return {
+    owner,
+    otherParent,
+    hasChildren: children.length > 0,
+    childcareRule,
+    shiftOptions,
+    shiftTypeById,
+    activePattern,
+    workingInterval,
+    shiftByKey,
+    childInfoFor,
+  };
+}
+
+/** Builds one week's plan from an already-loaded context - no I/O. */
+function computeWeekPlan(
+  context: HouseholdContext,
+  ownerId: string,
+  weekStart: string,
+  priorMumShiftOverride: ShiftInterval | null | undefined,
+): MumWeekPlan {
+  const { owner, otherParent, childcareRule } = context;
+  if (!owner) {
+    return { best: null, alternatives: [], message: "That person isn't a parent in this household.", ownerId, ownerName: "", otherParentName: null, weekStart, requiredMinutes: null };
+  }
+
+  const rangeStart = addDays(weekStart, -1);
+  const minSupervisorAge = childcareRule?.minSupervisorAge ?? null;
+  const strictPickupAge = childcareRule?.strictPickupAge ?? null;
+  const pickupBufferMinutes = childcareRule?.pickupBufferMinutes ?? 30;
+
+  const optimiserDays: OptimiserDay[] = [];
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(weekStart, i);
+    const other = otherParent ? context.workingInterval(otherParent.id, date) : { known: true, shift: null };
+    const childInfo = context.childInfoFor(date);
+
     let schoolCover: DayInterval | null = null;
     if (childInfo.length > 0 && childInfo.every((c) => c.at)) {
       const start = Math.max(...childInfo.map((c) => c.start));
       const end = Math.min(...childInfo.map((c) => c.end));
       if (end > start) schoolCover = { startMinutes: start, endMinutes: end };
     }
-    // Minutes a supervisor-age child is at home (before/after school, or all day).
     const supervisorHome: DayInterval[] = [];
     if (minSupervisorAge != null) {
       for (const c of childInfo) {
@@ -196,9 +228,6 @@ export async function getMumWeekPlan(
         }
       }
     }
-    // Below strictPickupAge, a sibling can never substitute for an adult
-    // specifically around that child's own school drop-off/pick-up - carve
-    // those buffer windows out of the sibling allowance (mirrors calendarService).
     let pickupWindows: DayInterval[] = [];
     if (strictPickupAge != null) {
       for (const c of childInfo) {
@@ -216,10 +245,10 @@ export async function getMumWeekPlan(
     }
     const restrictedSupervisorHome = subtractIntervals(supervisorHome, pickupWindows);
 
-    const ownShift = shiftByKey.get(`${ownerId}|${date}`);
+    const ownShift = context.shiftByKey.get(`${ownerId}|${date}`);
     let locked: OptimiserDay["locked"] = null;
     if (ownShift?.locked) {
-      const type = ownShift.shiftTypeId ? shiftTypeById.get(ownShift.shiftTypeId) : null;
+      const type = ownShift.shiftTypeId ? context.shiftTypeById.get(ownShift.shiftTypeId) : null;
       const startLocal = type?.startLocal ?? ownShift.customStart ?? null;
       const endLocal = type?.endLocal ?? ownShift.customEnd ?? null;
       const shift = startLocal && endLocal ? { startLocal, endLocal } : null;
@@ -232,8 +261,8 @@ export async function getMumWeekPlan(
 
     optimiserDays.push({
       date,
-      isWeekend: false, // engine derives the allowance from the real date
-      hasChildren: children.length > 0,
+      isWeekend: false,
+      hasChildren: context.hasChildren,
       dadKnown: other.known,
       dadShift: other.shift,
       locked,
@@ -242,8 +271,8 @@ export async function getMumWeekPlan(
     });
   }
 
-  const priorDadShift = otherParent ? workingInterval(otherParent.id, rangeStart).shift : null;
-  const priorMumShift = priorMumShiftOverride !== undefined ? priorMumShiftOverride : workingInterval(ownerId, rangeStart).shift;
+  const priorDadShift = otherParent ? context.workingInterval(otherParent.id, rangeStart).shift : null;
+  const priorMumShift = priorMumShiftOverride !== undefined ? priorMumShiftOverride : context.workingInterval(ownerId, rangeStart).shift;
 
   if (owner.requiredWeeklyMinutes == null) {
     return {
@@ -263,7 +292,7 @@ export async function getMumWeekPlan(
     priorDadShift,
     priorMumShift,
     requiredMinutes: owner.requiredWeeklyMinutes,
-    shiftOptions,
+    shiftOptions: context.shiftOptions,
     rule: {
       maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? 180,
       appliesWeekends: childcareRule?.appliesWeekends ?? true,
@@ -281,10 +310,36 @@ export async function getMumWeekPlan(
 }
 
 /**
- * Plans several consecutive weeks together (the "Plan the month" flow),
- * chaining each week's own suggested Sunday into the next week's "day
- * before" input instead of letting every week read the database in
- * isolation.
+ * Gathers a household's real data for the week and runs the deterministic
+ * shift optimiser (spec §6). Read-only: it returns recommendations, it never
+ * writes shifts.
+ */
+export async function getMumWeekPlan(
+  householdId: string,
+  ownerId: string,
+  weekStart: string,
+  /**
+   * Overrides what the day before this week looked like for this owner,
+   * instead of reading it from the database. Used when planning several
+   * consecutive weeks in one go (see getMumMonthPlan below): a week's own
+   * suggested-but-not-yet-applied Sunday shift wouldn't otherwise be visible
+   * to the next week's plan at all, since nothing's been saved yet. Pass
+   * `undefined` (the default) to read the real saved state as normal, or
+   * `null` explicitly for "the day before was a proposed day off".
+   */
+  priorMumShiftOverride?: ShiftInterval | null,
+): Promise<MumWeekPlan> {
+  const weekEnd = addDays(weekStart, 6);
+  const rangeStart = addDays(weekStart, -1);
+  const context = await loadHouseholdContext(householdId, ownerId, rangeStart, weekEnd);
+  return computeWeekPlan(context, ownerId, weekStart, priorMumShiftOverride);
+}
+
+/**
+ * Plans several consecutive weeks together (the "Plan the month"/"Plan the
+ * year" flow), chaining each week's own suggested Sunday into the next
+ * week's "day before" input instead of letting every week read the database
+ * in isolation.
  *
  * This matters because nothing is saved until the user taps Apply: without
  * chaining, a week suggesting a Sunday night shift and the FOLLOWING week's
@@ -294,17 +349,27 @@ export async function getMumWeekPlan(
  * for school - would never be checked at all. Fixes a real reported case:
  * a Sunday night shift suggested with no visibility into Monday's already-
  * known day shift and school run.
+ *
+ * All the weeks share ONE batch of queries covering the whole requested
+ * range (see loadHouseholdContext), not one query batch per week - the only
+ * way planning a full year stays fast instead of doing hundreds of
+ * sequential round trips to the database.
  */
 export async function getMumMonthPlan(
   householdId: string,
   ownerId: string,
   weekStarts: string[],
 ): Promise<MumWeekPlan[]> {
+  if (weekStarts.length === 0) return [];
+  const rangeStart = addDays(weekStarts.reduce((a, b) => (a < b ? a : b)), -1);
+  const rangeEnd = addDays(weekStarts.reduce((a, b) => (a > b ? a : b)), 6);
+  const context = await loadHouseholdContext(householdId, ownerId, rangeStart, rangeEnd);
+
   const results: MumWeekPlan[] = [];
   // undefined = read the real saved state (correct for the very first week too).
   let chainedPriorMumShift: ShiftInterval | null | undefined = undefined;
   for (const weekStart of weekStarts) {
-    const plan = await getMumWeekPlan(householdId, ownerId, weekStart, chainedPriorMumShift);
+    const plan = computeWeekPlan(context, ownerId, weekStart, chainedPriorMumShift);
     results.push(plan);
 
     const sunday = plan.best?.days[6];
