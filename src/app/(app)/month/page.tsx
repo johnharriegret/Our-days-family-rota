@@ -302,12 +302,14 @@ export default function MonthPage() {
             const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction);
             const parentRows = day.members.filter((member) => member.memberKind === "PARENT").sort((a, b) => parentSlot(a.name) - parentSlot(b.name));
             const children = day.members.filter((member) => member.memberKind === "CHILD");
+            const holidaySlots = new Set(parentRows.filter((parent) => parent.label === "Annual leave").map((parent) => parentSlot(parent.name)));
+            const holidayClass = holidaySlots.size === 2 ? " holiday-both" : holidaySlots.has(0) ? " holiday-hg" : holidaySlots.has(1) ? " holiday-jg" : "";
             const hasBankHoliday = children.some((child) => /bank holiday/i.test(child.label));
             const insetChildren = children.filter((child) => /inset/i.test(child.label));
             return (
               <div
                 key={day.date}
-                className={`month-cell${hasConflict ? " conflict" : ""}`}
+                className={`month-cell${hasConflict ? " conflict" : ""}${holidayClass}`}
                 style={{
                   ...(day.bothParentsOff && !hasConflict ? { background: `${togetherColor}33` } : undefined),
                   ...(isToday ? { outline: "2px solid var(--accent)" } : undefined),
