@@ -291,6 +291,23 @@ function buildWindow(
   return { days, reportFrom, reportTo };
 }
 
+/**
+ * Diagnostics for a plan request that never reached the search at all (no
+ * parent, or no weekly-hours target set) - nothing was generated or culled.
+ */
+const NO_SEARCH_DIAGNOSTICS: OptimiserResult["diagnostics"] = {
+  generated: 0,
+  rejectedByHours: 0,
+  hoursPrunedBranches: 0,
+  rejectedByRest: 0,
+  rejectedByChildcare: 0,
+  safe: 0,
+  truncated: false,
+  exhaustive: true,
+  bestSignature: null,
+  candidateCap: 0,
+};
+
 /** Builds one week's plan from an already-loaded context - no I/O. */
 function computeWeekPlan(
   context: HouseholdContext,
@@ -305,6 +322,7 @@ function computeWeekPlan(
       alternatives: [],
       bestWithConflicts: null,
       message: "That person isn't a parent in this household.",
+      diagnostics: NO_SEARCH_DIAGNOSTICS,
       ownerId,
       ownerName: "",
       otherParentName: null,
@@ -319,6 +337,7 @@ function computeWeekPlan(
       alternatives: [],
       bestWithConflicts: null,
       message: `Set ${owner.name}'s weekly hours requirement in Settings first, so a plan can hit it exactly.`,
+      diagnostics: NO_SEARCH_DIAGNOSTICS,
       ownerId,
       ownerName: owner.name,
       otherParentName: otherParent?.name ?? null,

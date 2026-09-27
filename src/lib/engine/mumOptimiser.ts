@@ -67,6 +67,45 @@ export type OptimiserInput = {
   shiftOptions: MumShiftOption[];
   rule: { maxUnsupervisedMinutes: number; appliesWeekends: boolean };
   maxAlternatives?: number;
+  /**
+   * Overrides the hard ceiling on how many candidate combinations generation
+   * will collect before it stops. Defaults to `MAX_CANDIDATES`. Exposed mainly
+   * so a test can force truncation and prove the optimiser stops claiming "no
+   * safe plan" once the search is no longer exhaustive.
+   */
+  maxCandidates?: number;
+};
+
+/**
+ * A developer-facing record of what the search actually did, so "no safe plan"
+ * is never an unexamined claim. It answers, for one plan request, exactly how
+ * many combinations were generated, how each hard rule culled the space, how
+ * many survivors were safe, and - crucially - whether the search was
+ * exhaustive. When `exhaustive` is false the optimiser has NOT proved that no
+ * safe plan exists; it has only failed to find one within the combinations it
+ * had time to check.
+ */
+export type OptimiserDiagnostics = {
+  /** combinations that passed every hard rule and were scored. */
+  generated: number;
+  /** fully-assigned combinations discarded for landing outside the weekly-hours band. */
+  rejectedByHours: number;
+  /** whole sub-trees pruned early as unable to reach, or already past, the hours target. */
+  hoursPrunedBranches: number;
+  /** individual shift placements skipped because minimum rest would be violated. */
+  rejectedByRest: number;
+  /** generated combinations removed because they left a childcare conflict. */
+  rejectedByChildcare: number;
+  /** generated combinations that were childcare-safe. */
+  safe: number;
+  /** true when generation stopped at the cap before the space was exhausted. */
+  truncated: boolean;
+  /** true only when every feasible combination was generated - the negation of `truncated`. */
+  exhaustive: boolean;
+  /** the winning safe combination's signature, or null when none was safe. */
+  bestSignature: string | null;
+  /** the ceiling generation stops at (see `maxCandidates`/`MAX_CANDIDATES`). */
+  candidateCap: number;
 };
 
 export type PlanDay = {
@@ -120,6 +159,8 @@ export type OptimiserResult = {
   bestWithConflicts: WeekPlan | null;
   /** set when no safe plan could be produced, with a plain-English reason. */
   message?: string;
+  /** what the search actually did - counts of every combination and why each was culled. */
+  diagnostics: OptimiserDiagnostics;
 };
 
 /** Minutes as a friendly hour count, e.g. 750 -> 12.5. */
@@ -307,10 +348,11 @@ function signature(chosen: (MumShiftOption | null)[]): string {
   return chosen.map((o) => o?.id ?? "-").join("|");
 }
 
-const MAX_CANDIDATES = 20000;
+export const MAX_CANDIDATES = 20000;
 
 export function planMumWeek(input: OptimiserInput): OptimiserResult {
   const { days, shiftOptions, requiredMinutes, reportFrom, reportTo } = input;
+  const cap = input.maxCandidates ?? MAX_CANDIDATES;
 
   if (shiftOptions.length === 0) {
     return {
@@ -318,6 +360,18 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
       alternatives: [],
       bestWithConflicts: null,
       message: "Add at least one shift type for this person first.",
+      diagnostics: {
+        generated: 0,
+        rejectedByHours: 0,
+        hoursPrunedBranches: 0,
+        rejectedByRest: 0,
+        rejectedByChildcare: 0,
+        safe: 0,
+        truncated: false,
+        exhaustive: true,
+        bestSignature: null,
+        candidateCap: cap,
+      },
     };
   }
 
@@ -336,6 +390,14 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
   const candidates: (MumShiftOption | null)[][] = [];
   const base: (MumShiftOption | null)[] = days.map(() => null);
 
+  // Search diagnostics: every combination the DFS considers is accounted for,
+  // so the caller can prove afterwards whether the space was exhausted (and
+  // therefore whether "no safe plan" is a fact or just "none found in time").
+  let truncated = false;
+  let rejectedByHours = 0; // fully-assigned combos outside the hours band
+  let hoursPrunedBranches = 0; // sub-trees pruned before reaching a leaf
+  let rejectedByRest = 0; // shift placements skipped for minimum rest
+
   /** The shift actually on a given day: locked, already-known, or chosen so far. */
   function actualShiftAt(dayIndex: number): ShiftInterval | null {
     if (dayIndex < 0 || dayIndex >= days.length) return null;
@@ -345,16 +407,29 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
   }
 
   function dfs(pos: number, running: number): void {
-    if (candidates.length >= MAX_CANDIDATES) return;
+    // The cap is a safety ceiling, not a design feature: hitting it means the
+    // search is no longer exhaustive, which the result must own up to rather
+    // than silently presenting a partial search as if it were complete.
+    if (candidates.length >= cap) {
+      truncated = true;
+      return;
+    }
     if (pos === unlockedIndexes.length) {
       if (Math.abs(running - target) <= maxOptionPaid) candidates.push([...base]);
+      else rejectedByHours += 1;
       return;
     }
     const remaining = unlockedIndexes.length - pos;
     // prune: even filling every remaining day with the biggest shift can't reach.
-    if (running + remaining * maxOptionPaid < target - maxOptionPaid) return;
+    if (running + remaining * maxOptionPaid < target - maxOptionPaid) {
+      hoursPrunedBranches += 1;
+      return;
+    }
     // prune: already too far over.
-    if (running > target + maxOptionPaid) return;
+    if (running > target + maxOptionPaid) {
+      hoursPrunedBranches += 1;
+      return;
+    }
 
     const dayIndex = unlockedIndexes[pos];
     const dayBeforeShift = actualShiftAt(dayIndex - 1);
@@ -375,9 +450,15 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
       // offered at all, whether the clash is with the day before or the day
       // after.
       const restBefore = restMinutes(dayBeforeShift, todayShift);
-      if (restBefore !== null && restBefore < MIN_REST_MINUTES) continue;
+      if (restBefore !== null && restBefore < MIN_REST_MINUTES) {
+        rejectedByRest += 1;
+        continue;
+      }
       const restAfter = restMinutes(todayShift, nextFixedShift);
-      if (restAfter !== null && restAfter < MIN_REST_MINUTES) continue;
+      if (restAfter !== null && restAfter < MIN_REST_MINUTES) {
+        rejectedByRest += 1;
+        continue;
+      }
 
       base[dayIndex] = option;
       dfs(pos + 1, running + option.paidMinutes);
@@ -386,13 +467,31 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
   }
   dfs(0, 0);
 
+  /** Assembles the diagnostics record once the safe count is known. */
+  const makeDiagnostics = (safeCount: number, bestSignature: string | null): OptimiserDiagnostics => ({
+    generated: candidates.length,
+    rejectedByHours,
+    hoursPrunedBranches,
+    rejectedByRest,
+    rejectedByChildcare: candidates.length - safeCount,
+    safe: safeCount,
+    truncated,
+    exhaustive: !truncated,
+    bestSignature,
+    candidateCap: cap,
+  });
+
   if (candidates.length === 0) {
     return {
       best: null,
       alternatives: [],
       bestWithConflicts: null,
-      message:
-        "No combination of the available shift types gets close to the weekly hours. Try adding a shift type or adjusting the required hours.",
+      // A truncated search that produced nothing is not the same as "the hours
+      // are impossible" - the space simply wasn't finished. Don't conflate them.
+      message: truncated
+        ? "The search hit its size limit before it could assemble any workable combination, so this is not proof that none exists. Try fewer shift types, locking a day, or adjusting the hours."
+        : "No combination of the available shift types gets close to the weekly hours. Try adding a shift type or adjusting the required hours.",
+      diagnostics: makeDiagnostics(0, null),
     };
   }
 
@@ -410,17 +509,25 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
   if (safe.length === 0) {
     const closest = scored[0];
     const worst = closest.plan.conflicts[0];
+    // "Every option leaves a gap" is only true if every option was actually
+    // checked. A truncated search has NOT proved that - it must say so instead
+    // of asserting a fact it didn't establish (brief §10).
+    const message = truncated
+      ? `Checked ${candidates.length} combinations and none was safe, but the search reached its size limit before every combination could be checked - so this does not prove no safe plan exists. Try fewer shift types, locking a day, or adjusting the hours.`
+      : worst
+        ? `Every option leaves a childcare gap, so there is no safe plan for this week. The closest option still has a problem: ${worst.explanation}`
+        : "Every option leaves a childcare gap, so there is no safe plan for this week.";
     return {
       best: null,
       alternatives: [],
       bestWithConflicts: closest.plan,
-      message: worst
-        ? `Every option leaves a childcare gap, so there is no safe plan for this week. The closest option still has a problem: ${worst.explanation}`
-        : "Every option leaves a childcare gap, so there is no safe plan for this week.",
+      message,
+      diagnostics: makeDiagnostics(0, null),
     };
   }
 
   const best = safe[0];
+  const diagnostics = makeDiagnostics(safe.length, signature(best.chosen));
   const seen = new Set([signature(best.chosen)]);
   const alternatives: WeekPlan[] = [];
   const maxAlt = input.maxAlternatives ?? 3;
@@ -454,8 +561,9 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
       message: `There's no way to work these hours this week without a childcare gap. The safe plan below is ${shortBy} hours off the target; the option after it reaches the hours but leaves a gap: ${
         closestUnsafe.plan.conflicts[0]?.explanation ?? "nobody is available for part of the week."
       }`,
+      diagnostics,
     };
   }
 
-  return { best: best.plan, alternatives, bestWithConflicts: null };
+  return { best: best.plan, alternatives, bestWithConflicts: null, diagnostics };
 }
