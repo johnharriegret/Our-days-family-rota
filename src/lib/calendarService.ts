@@ -321,10 +321,13 @@ export async function getCalendarRange(
           weekdays: t.weekdays,
         })) ?? [];
       const at = c.school ? isSchoolDay(date, terms) : false;
+      const reason = c.school && !at ? nonSchoolDayReason(date, terms) : null;
       return {
         at,
         start: c.school ? toMinutes(c.school.startLocal) : 0,
         end: c.school ? toMinutes(c.school.endLocal) : 0,
+        hasSchool: Boolean(c.school),
+        reason,
       };
     });
     if (childSchool.every((c) => c.at)) {
@@ -332,6 +335,22 @@ export async function getCalendarRange(
       const end = Math.min(...childSchool.map((c) => c.end));
       if (end > start) covered.push({ startMinutes: start, endMinutes: end });
     }
+
+    // A hard exception to the morning-handover rule: if EVERY child who's
+    // actually enrolled in a school is off for a recognised school holiday,
+    // INSET day, or bank holiday (not just "it's the weekend", which is
+    // handled separately below), there's no school run to miss, so a
+    // before-school gap is allowed the same way a weekend gap is. An
+    // ordinary school day never sets this, so the pre-existing hard rule
+    // stands: a handover gap with nobody home is CHILDCARE_NEEDED regardless
+    // of the 3-hour allowance, since the kids need help getting ready for
+    // school.
+    const schoolLinked = childSchool.filter((c) => c.hasSchool);
+    const isSchoolHoliday =
+      schoolLinked.length > 0 &&
+      schoolLinked.every(
+        (c) => c.reason?.kind === "BANK_HOLIDAY" || c.reason?.kind === "HOLIDAY" || c.reason?.kind === "INSET",
+      );
 
     // Minutes a supervisor-age child is at home (and could supervise): the whole
     // day when they're off school, or before/after school on a school day.
@@ -381,6 +400,7 @@ export async function getCalendarRange(
         appliesWeekends: childcareRule?.appliesWeekends ?? true,
         minSupervisorAge,
       },
+      isSchoolHoliday,
     });
     return {
       status: result.status,

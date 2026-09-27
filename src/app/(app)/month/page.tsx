@@ -252,7 +252,7 @@ export default function MonthPage() {
                 key={day.date}
                 className={`month-cell${hasConflict ? " conflict" : ""}`}
                 style={{
-                  ...(day.bothParentsOff ? { background: `${togetherColor}33` } : undefined),
+                  ...(day.bothParentsOff && !hasConflict ? { background: `${togetherColor}33` } : undefined),
                   ...(isToday ? { outline: "2px solid var(--accent)" } : undefined),
                   ...(mark ? { boxShadow: `inset 0 0 0 3px ${pendingColor(mark)}` } : undefined),
                   ...(canPaint ? { cursor: "pointer" } : undefined),

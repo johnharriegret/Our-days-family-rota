@@ -115,8 +115,20 @@ export function childcareStatus(params: {
   coveredIntervals: DayInterval[];
   supervisorHome: DayInterval[];
   rule: ChildcareRuleSpec;
+  /**
+   * True when every school-age child is off for a recognised school
+   * holiday, INSET day, or bank holiday (NOT merely a weekend, which
+   * `isWeekend(date)` below already covers on its own). On an ordinary
+   * school day this must be false/omitted, which is what makes a
+   * before-school handover gap a hard CHILDCARE_NEEDED regardless of the
+   * usual allowance: there's no school run to skip, so the gap is only
+   * ever excused by a supervisor-age sibling being home, same as any
+   * other weekday. Passing this true relaxes that the same way a weekend
+   * does, since there's no morning school prep to supervise either.
+   */
+  isSchoolHoliday?: boolean;
 }): ChildcareResult {
-  const { date, coveredIntervals, supervisorHome, rule } = params;
+  const { date, coveredIntervals, supervisorHome, rule, isSchoolHoliday } = params;
   const gaps = uncoveredGaps(coveredIntervals);
   const allowanceHours = Math.round((rule.maxUnsupervisedMinutes / 60) * 10) / 10;
 
@@ -131,7 +143,7 @@ export function childcareStatus(params: {
   }
 
   const totalUncovered = gaps.reduce((sum, g) => sum + (g.endMinutes - g.startMinutes), 0);
-  const weekendAllows = rule.appliesWeekends && isWeekend(date);
+  const weekendAllows = rule.appliesWeekends && (isWeekend(date) || isSchoolHoliday === true);
 
   // A gap is allowed if it's short enough AND either the weekend allowance
   // applies or a supervisor-age child is home for the whole of it.

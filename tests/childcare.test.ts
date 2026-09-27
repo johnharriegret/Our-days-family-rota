@@ -43,6 +43,40 @@ test("a 2-hour weekday gap on a school day with no cover needs childcare", () =>
   assert.equal(result.gapEnd, "18:00");
 });
 
+test("a 2-hour morning handover gap on an ordinary school day needs childcare (hard rule)", () => {
+  // HG's night shift ends 06:00, Mum's shift doesn't start until 08:00: a
+  // 2-hour gap (360-480) that's well within the 3-hour allowance, but it's a
+  // normal Thursday school day, so the kids still need help with school prep.
+  const result = childcareStatus({
+    date: "2026-09-10", // Thursday, ordinary school day
+    coveredIntervals: [
+      { startMinutes: 0, endMinutes: 360 },
+      { startMinutes: 480, endMinutes: 1440 },
+    ],
+    supervisorHome: [],
+    rule,
+  });
+  assert.equal(result.status, "CHILDCARE_NEEDED");
+  assert.equal(result.gapStart, "06:00");
+  assert.equal(result.gapEnd, "08:00");
+});
+
+test("the same 2-hour handover gap is fine when it's a school holiday or bank holiday", () => {
+  // Same gap, same weekday, but the kids have no school run to make - so it's
+  // treated like a weekend gap and falls within the 3-hour allowance.
+  const result = childcareStatus({
+    date: "2026-09-10", // Thursday, but flagged as a school holiday/bank holiday
+    coveredIntervals: [
+      { startMinutes: 0, endMinutes: 360 },
+      { startMinutes: 480, endMinutes: 1440 },
+    ],
+    supervisorHome: [],
+    rule,
+    isSchoolHoliday: true,
+  });
+  assert.equal(result.status, "HANDOVER");
+});
+
 test("the same 4-hour gap is a conflict on a weekend (over the 3-hour allowance)", () => {
   const result = childcareStatus({
     date: "2026-09-06", // Sunday
