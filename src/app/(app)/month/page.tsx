@@ -130,6 +130,7 @@ export default function MonthPage() {
   const [quickFillError, setQuickFillError] = useState<string | null>(null);
   const [editingDay, setEditingDay] = useState<CalendarDayView | null>(null);
   const [deletingShiftId, setDeletingShiftId] = useState<string | null>(null);
+  const [clearingMonth, setClearingMonth] = useState(false);
 
   useEffect(() => {
     apiFetch<{ members: FamilyMember[] }>("/api/family-members").then((d) =>
@@ -218,6 +219,23 @@ export default function MonthPage() {
       setDeletingShiftId(null);
     }
   }
+
+  async function clearWifeMonth() {
+    const wife = parents.find((parent) => /jean/i.test(parent.name) || parent.icon === "mum");
+    if (!wife) return;
+    const last = daysInMonth(monthStart);
+    const to = addDays(monthStart, last - 1);
+    if (!confirm(`Clear ${wife.name}'s editable shifts from ${monthLabel}? Her repeating rota and any locked shifts will stay untouched.`)) return;
+    setClearingMonth(true);
+    try {
+      await apiFetch("/api/shifts/clear", { method: "POST", body: JSON.stringify({ ownerId: wife.id, from: monthStart, to }) });
+      emitCalendarChanged();
+    } catch (err) {
+      setQuickFillError(err instanceof Error ? err.message : "Couldn't clear that month");
+    } finally {
+      setClearingMonth(false);
+    }
+  }
   // -------------------------------------------------------------------------
 
   const load = useCallback(async () => {
@@ -266,6 +284,12 @@ export default function MonthPage() {
           <Sparkles size={17} /> Plan the year
         </button>
       </div>
+
+      {parents.some((parent) => /jean/i.test(parent.name) || parent.icon === "mum") && (
+        <button className="btn btn-ghost btn-block" disabled={clearingMonth} onClick={clearWifeMonth} style={{ color: "var(--bad)", borderColor: "color-mix(in srgb, var(--bad) 30%, var(--line))", marginTop: -6, marginBottom: 14 }}>
+          {clearingMonth ? "Clearing Jeanicar's month…" : "Clear Jeanicar's editable shifts for this month"}
+        </button>
+      )}
 
       {planScope && (
         <PlanWeekSheet
