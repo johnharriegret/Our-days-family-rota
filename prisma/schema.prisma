@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_NON_POOLING")
+}
+
+enum Role {
+  ADMIN
+  PARENT
+  CHILD
+}
+
+enum MemberKind {
+  PARENT
+  CHILD
+}
+
+enum ShiftSource {
+  MANUAL
+  PATTERN_OVERRIDE
+}
+
+enum TermType {
+  TERM
+  HOLIDAY
+  INSET
+  BANK_HOLIDAY
+}
+
+enum EventCategory {
+  APPOINTMENT
+  ACTIVITY
+  HOLIDAY
+  OTHER
+}
+
+model Household {
+  id             String             @id @default(cuid())
+  timezone       String             @default("Europe/London")
+  weekStartsOn   Int                @default(1)
+  createdAt      DateTime           @default(now())
+  members        FamilyMember[]
+  users          User[]
+  patterns       ShiftPattern[]
+  shiftTypes     ShiftType[]
+  shifts         WorkShift[]
+  schools        School[]
+  events         Event[]
+  leaveGrants    AnnualLeaveGrant[]
+  childcareRules ChildcareRule[]
+  apiKeys        APIKey[]
+  settings       FamilySettings?
+}
+
+model User {
+  id             String        @id @default(cuid())
+  householdId    String
+  household      Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  familyMemberId String?       @unique
+  familyMember   FamilyMember? @relation(fields: [familyMemberId], references: [id])
+  email          String        @unique
+  passwordHash   String
+  role           Role
+  createdAt      DateTime      @default(now())
+}
+
+model FamilyMember {
+  id          String      @id @default(cuid())
+  householdId String
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  name        String
+  kind        MemberKind
+  dateOfBirth DateTime?   @db.Date
+  schoolId    String?
+  school      School?     @relation(fields: [schoolId], references: [id])
+  colorToken  String
+  icon        String
+  archived    Boolean     @default(false)
+  requiredWeeklyMinutes Int? // e.g. 2250 for a hard 37.5h/week requirement; null = no fixed requirement
+  user        User?
+  patterns    ShiftPattern[]
+  shiftTypes  ShiftType[]
+  shifts      WorkShift[]
+  leaveGrants AnnualLeaveGrant[]
+
+  @@index([householdId])
+}
+
+model ShiftPattern {
+  id            String       @id @default(cuid())
+  householdId   String
+  household     Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  ownerId       String
+  owner         FamilyMember @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  anchor        DateTime     @db.Date
+  effectiveFrom DateTime     @default(now())
+  version       Int          @default(1)
+  archivedAt    DateTime?
+  blocks        ShiftBlock[]
+
+  @@index([householdId, ownerId])
+}
+
+model ShiftBlock {
+  id         String       @id @default(cuid())
+  patternId  String
+  pattern    ShiftPattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+  order      Int
+  kind       String
+  count      Int
+  startLocal String?
+  endLocal   String?
+
+  @@index([patternId])
+}
+
+model ShiftType {
+  id          String       @id @default(cuid())
+  householdId String
+  household   Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  ownerId     String
+  owner       FamilyMember @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  startLocal  String
+  endLocal    String
+  paidMinutes Int
+  color       String
+  archived    Boolean      @default(false)
+  shifts      WorkShift[]
+
+  @@index([householdId, ownerId])
+}
+
+model WorkShift {
+  id          String       @id @default(cuid())
+  householdId String
+  household   Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  ownerId     String
+  owner       FamilyMember @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  date        DateTime     @db.Date
+  shiftTypeId String?
+  shiftType   ShiftType?   @relation(fields: [shiftTypeId], references: [id])
+  customStart String?
+  customEnd   String?
+  paidMinutes Int?
+  source      ShiftSource
+  locked      Boolean      @default(false)
+  note        String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([ownerId, date])
+  @@index([householdId, date])
+}
+
+model School {
+  id          String         @id @default(cuid())
+  householdId String
+  household   Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  name        String
+  startLocal  String         @default("08:45")
+  endLocal    String         @default("15:15")
+  terms       SchoolTerm[]
+  members     FamilyMember[]
+
+  @@index([householdId])
+}
+
+model SchoolTerm {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  type      TermType
+  label     String
+
+  @@index([schoolId])
+}
+
+model Event {
+  id          String        @id @default(cuid())
+  householdId String
+  household   Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  title       String
+  memberIds   String[]
+  date        DateTime      @db.Date
+  startLocal  String?
+  endLocal    String?
+  repeatRule  String?
+  category    EventCategory @default(OTHER)
+  createdAt   DateTime      @default(now())
+
+  @@index([householdId, date])
+}
+
+model AnnualLeaveGrant {
+  id           String       @id @default(cuid())
+  householdId  String
+  household    Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  ownerId      String
+  owner        FamilyMember @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  year         Int
+  totalMinutes Int
+  usedMinutes  Int          @default(0)
+
+  @@unique([ownerId, year])
+}
+
+model ChildcareRule {
+  id                     String    @id @default(cuid())
+  householdId            String
+  household              Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  maxUnsupervisedMinutes Int       @default(180)
+  appliesWeekends        Boolean   @default(true)
+  minSupervisorAge       Int?      @default(13)
+  effectiveFrom          DateTime  @default(now())
+
+  @@index([householdId, effectiveFrom])
+}
+
+model FamilySettings {
+  householdId String    @id
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  data        Json      @default("{}")
+}
+
+model APIKey {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  label       String
+  hash        String    @unique
+  scopes      String[]  @default(["read"])
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+
+  @@index([householdId])
+}
