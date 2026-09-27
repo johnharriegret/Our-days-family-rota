@@ -51,6 +51,12 @@ export async function POST(request: Request) {
       orderBy: { version: "desc" },
     });
 
+    // The FIRST rota a person ever saves should describe their whole calendar,
+    // so it takes effect from its own anchor date (there is no history to
+    // protect yet). A later correction only takes effect from today onward, so
+    // past days keep whatever the earlier version showed.
+    const effectiveFrom = previous ? new Date() : new Date(`${anchor}T00:00:00.000Z`);
+
     const pattern = await prisma.$transaction(async (tx) => {
       if (previous) {
         await tx.shiftPattern.update({ where: { id: previous.id }, data: { archivedAt: new Date() } });
@@ -60,6 +66,7 @@ export async function POST(request: Request) {
           householdId: session.householdId,
           ownerId,
           anchor: new Date(anchor),
+          effectiveFrom,
           version: (previous?.version ?? 0) + 1,
           blocks: {
             create: blocks.map((b, index) => ({

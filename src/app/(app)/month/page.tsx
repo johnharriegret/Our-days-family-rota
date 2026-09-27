@@ -92,12 +92,15 @@ export default function MonthPage() {
           {days.map((day) => {
             const dayNum = Number(day.date.slice(8, 10));
             const isToday = day.date === todayStr();
+            const hasConflict = day.childcare?.status === "CHILDCARE_NEEDED";
+            const titleLines = day.members.map((m) => `${m.name}: ${m.label}`);
+            if (hasConflict && day.childcare) titleLines.push(`⚠ ${day.childcare.explanation}`);
             return (
               <div
                 key={day.date}
-                className={`month-cell${day.bothParentsOff ? " together" : ""}`}
+                className={`month-cell${day.bothParentsOff ? " together" : ""}${hasConflict ? " conflict" : ""}`}
                 style={isToday ? { outline: "2px solid var(--accent)" } : undefined}
-                title={day.members.map((m) => `${m.name}: ${m.label}`).join("\n")}
+                title={titleLines.join("\n")}
               >
                 <span>{dayNum}</span>
                 <div className="dot-row">
@@ -117,7 +120,7 @@ export default function MonthPage() {
         </div>
       </div>
       <p style={{ color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
-        Tap and hold a day to see who&apos;s doing what. Pink highlight = both parents off.
+        Tap and hold a day to see who&apos;s doing what. Pink = both parents off · red dot = childcare needed.
       </p>
     </div>
   );

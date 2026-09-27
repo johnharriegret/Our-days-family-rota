@@ -26,7 +26,7 @@ export function AddSheet({
 }) {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [selected, setSelected] = useState<FamilyMember | "FAMILY" | null>(null);
-  const [mode, setMode] = useState<"WORK" | "OFF" | EventCategory | null>(null);
+  const [mode, setMode] = useState<"WORK" | "OFF" | "LEAVE" | EventCategory | null>(null);
   const [date, setDate] = useState(defaultDate);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [customStart, setCustomStart] = useState("06:00");
@@ -94,6 +94,33 @@ export function AddSheet({
       await apiFetch("/api/shifts", {
         method: "POST",
         body: JSON.stringify({ ownerId: selected.id, date, shiftTypeId: null, customStart: null, customEnd: null }),
+      });
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveLeave() {
+    if (!selected || selected === "FAMILY") return;
+    setBusy(true);
+    setError(null);
+    try {
+      // Annual leave for a parent is a real day off (note-tagged) so it counts
+      // towards days-off-together and childcare cover - not just a diary note.
+      await apiFetch("/api/shifts", {
+        method: "POST",
+        body: JSON.stringify({
+          ownerId: selected.id,
+          date,
+          shiftTypeId: null,
+          customStart: null,
+          customEnd: null,
+          note: "Annual leave",
+        }),
       });
       onSaved();
       onClose();
@@ -181,9 +208,14 @@ export function AddSheet({
                 <>
                   <button className="choice-btn" onClick={() => setMode("WORK")}>Work</button>
                   <button className="choice-btn" onClick={() => setMode("OFF")}>Off</button>
+                  <button className="choice-btn" onClick={() => setMode("LEAVE")}>Annual leave</button>
                 </>
               )}
-              {EVENT_TYPES.map((t) => (
+              {/* For a parent, "Annual leave" is a real day off (LEAVE above), so
+                  drop the event-style HOLIDAY option to avoid two confusing paths. */}
+              {EVENT_TYPES.filter(
+                (t) => !(t.value === "HOLIDAY" && selected !== "FAMILY" && selected.kind === "PARENT"),
+              ).map((t) => (
                 <button key={t.value} className="choice-btn" onClick={() => setMode(t.value)}>
                   {t.label}
                 </button>
@@ -263,7 +295,26 @@ export function AddSheet({
           </>
         )}
 
-        {mode && mode !== "WORK" && mode !== "OFF" && (
+        {mode === "LEAVE" && (
+          <>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setMode(null)}
+              style={{ padding: 0, marginBottom: 12, minHeight: "auto" }}
+            >
+              ← Back
+            </button>
+            <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 14 }}>
+              Book {selected !== "FAMILY" ? selected?.name : ""} annual leave on {date}. This counts as a
+              day off together and towards childcare cover.
+            </p>
+            <button className="btn btn-primary btn-block btn-lg" disabled={busy} onClick={saveLeave}>
+              Confirm annual leave
+            </button>
+          </>
+        )}
+
+        {mode && mode !== "WORK" && mode !== "OFF" && mode !== "LEAVE" && (
           <>
             <button
               className="btn btn-ghost"

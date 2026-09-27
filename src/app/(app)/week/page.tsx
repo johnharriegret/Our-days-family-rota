@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Heart } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
+import { ChildcareBanner } from "@/components/ChildcareBanner";
 import type { CalendarDayView } from "@/lib/clientTypes";
 
 function todayStr(): string {
@@ -103,6 +104,7 @@ export default function WeekPage() {
                   <Heart size={13} /> Both off
                 </div>
               )}
+              <ChildcareBanner childcare={day.childcare} compact />
             </div>
           );
         })}

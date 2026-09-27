@@ -44,9 +44,17 @@ export type CalendarEventEntry = {
   memberIds: string[];
 };
 
+export type CalendarChildcare = {
+  status: "SAFE" | "HANDOVER" | "CHILDCARE_NEEDED";
+  explanation: string;
+  gapStart: string | null;
+  gapEnd: string | null;
+};
+
 export type CalendarDayView = {
   date: string;
   members: MemberDayEntry[];
   events: CalendarEventEntry[];
   bothParentsOff: boolean;
+  childcare: CalendarChildcare | null;
 };

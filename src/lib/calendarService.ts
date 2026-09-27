@@ -1,9 +1,30 @@
 import { prisma } from "./prisma";
-import { addDays, isSchoolDay, resolvePatternDay } from "./engine";
-import type { ShiftPatternSpec } from "./engine/types";
+import {
+  addDays,
+  childcareStatus,
+  homeIntervalsForDay,
+  isSchoolDay,
+  resolvePatternDay,
+} from "./engine";
+import type { ChildcareResult, DayInterval, ShiftPatternSpec } from "./engine/types";
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** Whole-number age on `date` from an ISO date-of-birth, or null if unknown. */
+function ageOn(date: string, dob: string | null): number | null {
+  if (!dob) return null;
+  const [y, m, d] = date.split("-").map(Number);
+  const [by, bm, bd] = dob.slice(0, 10).split("-").map(Number);
+  let age = y - by;
+  if (m < bm || (m === bm && d < bd)) age -= 1;
+  return age;
 }
 
 export type MemberDayEntry = {
@@ -29,19 +50,28 @@ export type CalendarEventEntry = {
   memberIds: string[];
 };
 
+export type CalendarChildcare = {
+  status: ChildcareResult["status"];
+  explanation: string;
+  gapStart: string | null;
+  gapEnd: string | null;
+};
+
 export type CalendarDayView = {
   date: string;
   members: MemberDayEntry[];
   events: CalendarEventEntry[];
   bothParentsOff: boolean;
+  /** null when childcare can't be judged (no children, or a parent isn't set up). */
+  childcare: CalendarChildcare | null;
 };
 
 /**
  * Builds a day-by-day view for [from, to] (inclusive), merging each parent's
  * repeating pattern with any manual override/entry for that date, and each
- * child's school-day status. This is Phase 1 scope: it does not yet compute
- * childcare-conflict status (that's Phase 2's job, built on top of the
- * already-tested lib/engine/childcare.ts).
+ * child's school-day status. It also computes per-day childcare cover (Phase 2)
+ * on top of the tested lib/engine/childcare.ts, flagging days where the children
+ * would be left without an adult beyond the household's allowance.
  */
 export async function getCalendarRange(
   householdId: string,
@@ -101,10 +131,18 @@ export async function getCalendarRange(
   const shiftTypes = await prisma.shiftType.findMany({ where: { householdId } });
   const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
 
+  // Fetch one day before `from` too, so an overnight shift starting the evening
+  // before the range still counts against the first morning's childcare cover.
+  const prevDate = new Date(`${addDays(from, -1)}T00:00:00.000Z`);
   const workShifts = await prisma.workShift.findMany({
-    where: { householdId, date: { gte: fromDate, lte: toDate } },
+    where: { householdId, date: { gte: prevDate, lte: toDate } },
   });
   const workShiftByKey = new Map(workShifts.map((s) => [`${s.ownerId}|${toDateStr(s.date)}`, s]));
+
+  const childcareRule = await prisma.childcareRule.findFirst({
+    where: { householdId },
+    orderBy: { effectiveFrom: "desc" },
+  });
 
   const events = await prisma.event.findMany({
     where: { householdId, date: { gte: fromDate, lte: toDate } },
@@ -124,6 +162,149 @@ export async function getCalendarRange(
     eventsByDate.set(key, list);
   }
 
+  type ParentDay = {
+    known: boolean;
+    working: boolean;
+    startLocal: string | null;
+    endLocal: string | null;
+    isLeave: boolean;
+    locked: boolean;
+    source: "PATTERN" | "MANUAL" | "NONE";
+    label: string;
+  };
+
+  // Single source of truth for "what is this parent doing on this date" - used
+  // both for the display row and for childcare coverage, so the two can never
+  // disagree.
+  function parentWorkFor(memberId: string, date: string): ParentDay {
+    const manual = workShiftByKey.get(`${memberId}|${date}`);
+    if (manual) {
+      const type = manual.shiftTypeId ? shiftTypeById.get(manual.shiftTypeId) : null;
+      const startLocal = type?.startLocal ?? manual.customStart ?? null;
+      const endLocal = type?.endLocal ?? manual.customEnd ?? null;
+      const working = Boolean(startLocal && endLocal);
+      const isLeave = !working && manual.note === "Annual leave";
+      return {
+        known: true,
+        working,
+        startLocal: working ? startLocal : null,
+        endLocal: working ? endLocal : null,
+        isLeave,
+        locked: manual.locked,
+        source: manual.source === "PATTERN_OVERRIDE" ? "PATTERN" : "MANUAL",
+        label: type?.name ?? (working ? "Custom shift" : isLeave ? "Annual leave" : "Off"),
+      };
+    }
+    const pattern = activePatternFor(memberId, date);
+    if (pattern) {
+      const resolved = resolvePatternDay(date, pattern);
+      const working = resolved.kind !== "O";
+      return {
+        known: true,
+        working,
+        startLocal: working ? resolved.startLocal : null,
+        endLocal: working ? resolved.endLocal : null,
+        isLeave: false,
+        locked: false,
+        source: "PATTERN",
+        label: working ? `${resolved.kind} ${resolved.startLocal}–${resolved.endLocal}` : "Off",
+      };
+    }
+    return {
+      known: false,
+      working: false,
+      startLocal: null,
+      endLocal: null,
+      isLeave: false,
+      locked: false,
+      source: "NONE",
+      label: "Not set up yet",
+    };
+  }
+
+  // The minutes-of-day (0-1440) a parent is at HOME on `date`, accounting for an
+  // overnight shift that started the evening before spilling into the morning.
+  function parentHomeIntervals(memberId: string, date: string): DayInterval[] {
+    const today = parentWorkFor(memberId, date);
+    const yesterday = parentWorkFor(memberId, addDays(date, -1));
+    const todayShift =
+      today.working && today.startLocal && today.endLocal
+        ? { startLocal: today.startLocal, endLocal: today.endLocal }
+        : null;
+    const yesterdayShift =
+      yesterday.working && yesterday.startLocal && yesterday.endLocal
+        ? { startLocal: yesterday.startLocal, endLocal: yesterday.endLocal }
+        : null;
+    return homeIntervalsForDay(todayShift, yesterdayShift);
+  }
+
+  const childMembers = members.filter((m) => m.kind === "CHILD");
+  const parentMembers = members.filter((m) => m.kind === "PARENT");
+
+  function childcareForDay(date: string): CalendarChildcare | null {
+    if (childMembers.length === 0 || parentMembers.length === 0) return null;
+    // Can't judge cover unless every parent's status for the day is actually
+    // known. (An unknown previous day just means no overnight shift spills into
+    // this morning, which parentHomeIntervals already handles.)
+    const allKnown = parentMembers.every((p) => parentWorkFor(p.id, date).known);
+    if (!allKnown) return null;
+
+    // An adult is home during the complement of their away-at-work time.
+    const covered: DayInterval[] = [];
+    for (const p of parentMembers) {
+      for (const home of parentHomeIntervals(p.id, date)) covered.push(home);
+    }
+
+    // School only covers the children while EVERY child is at school - a child at
+    // home still needs an adult - so use the intersection of their school hours.
+    const childSchool = childMembers.map((c) => {
+      const terms =
+        c.school?.terms.map((t) => ({
+          startDate: toDateStr(t.startDate),
+          endDate: toDateStr(t.endDate),
+          type: t.type,
+          label: t.label,
+        })) ?? [];
+      const at = c.school ? isSchoolDay(date, terms) : false;
+      return {
+        at,
+        start: c.school ? toMinutes(c.school.startLocal) : 0,
+        end: c.school ? toMinutes(c.school.endLocal) : 0,
+      };
+    });
+    if (childSchool.every((c) => c.at)) {
+      const start = Math.max(...childSchool.map((c) => c.start));
+      const end = Math.min(...childSchool.map((c) => c.end));
+      if (end > start) covered.push({ startMinutes: start, endMinutes: end });
+    }
+
+    const minSupervisorAge = childcareRule?.minSupervisorAge ?? null;
+    const oldestChildHome =
+      minSupervisorAge != null &&
+      childMembers.some((c, i) => {
+        if (childSchool[i].at) return false;
+        const age = ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null);
+        return age != null && age >= minSupervisorAge;
+      });
+
+    const result = childcareStatus({
+      date,
+      coveredIntervals: covered,
+      oldestChildHome,
+      rule: {
+        maxUnsupervisedMinutes: childcareRule?.maxUnsupervisedMinutes ?? 180,
+        appliesWeekends: childcareRule?.appliesWeekends ?? true,
+        minSupervisorAge,
+      },
+    });
+    return {
+      status: result.status,
+      explanation: result.explanation,
+      gapStart: result.gapStart,
+      gapEnd: result.gapEnd,
+    };
+  }
+
   const days: CalendarDayView[] = [];
   let cursor = from;
   while (cursor <= to) {
@@ -137,14 +318,19 @@ export async function getCalendarRange(
             type: t.type,
             label: t.label,
           })) ?? [];
+        const hasTerms = terms.length > 0;
         const atSchool = member.school ? isSchoolDay(date, terms) : false;
+        // Distinguish "definitely home" (we have term dates and this isn't a
+        // school day) from "we don't know yet" (a school is linked but no term
+        // dates have been entered) - otherwise every day silently reads "Home".
+        const homeLabel = member.school && !hasTerms ? "Home · add term dates" : "Home";
         return {
           memberId: member.id,
           name: member.name,
           colorToken: member.colorToken,
           icon: member.icon,
           memberKind: "CHILD",
-          label: atSchool ? `School ${member.school!.startLocal}–${member.school!.endLocal}` : "Home",
+          label: atSchool ? `School ${member.school!.startLocal}–${member.school!.endLocal}` : homeLabel,
           startLocal: atSchool ? member.school!.startLocal : null,
           endLocal: atSchool ? member.school!.endLocal : null,
           isOff: !atSchool,
@@ -153,69 +339,36 @@ export async function getCalendarRange(
         };
       }
 
-      const manual = workShiftByKey.get(`${member.id}|${date}`);
-      if (manual) {
-        const type = manual.shiftTypeId ? shiftTypeById.get(manual.shiftTypeId) : null;
-        const startLocal = type?.startLocal ?? manual.customStart ?? null;
-        const endLocal = type?.endLocal ?? manual.customEnd ?? null;
-        const isWorking = Boolean(startLocal && endLocal);
-        return {
-          memberId: member.id,
-          name: member.name,
-          colorToken: member.colorToken,
-          icon: member.icon,
-          memberKind: "PARENT",
-          label: type?.name ?? (isWorking ? "Custom shift" : "Off"),
-          startLocal,
-          endLocal,
-          isOff: !isWorking,
-          locked: manual.locked,
-          source: manual.source === "PATTERN_OVERRIDE" ? "PATTERN" : "MANUAL",
-        };
-      }
-
-      const pattern = activePatternFor(member.id, date);
-      if (pattern) {
-        const resolved = resolvePatternDay(date, pattern);
-        const isOff = resolved.kind === "O";
-        return {
-          memberId: member.id,
-          name: member.name,
-          colorToken: member.colorToken,
-          icon: member.icon,
-          memberKind: "PARENT",
-          label: isOff ? "Off" : `${resolved.kind} ${resolved.startLocal}–${resolved.endLocal}`,
-          startLocal: resolved.startLocal,
-          endLocal: resolved.endLocal,
-          isOff,
-          locked: false,
-          source: "PATTERN",
-        };
-      }
-
+      const pd = parentWorkFor(member.id, date);
       return {
         memberId: member.id,
         name: member.name,
         colorToken: member.colorToken,
         icon: member.icon,
-        memberKind: "PARENT",
-        label: "Not set up yet",
-        startLocal: null,
-        endLocal: null,
-        isOff: true,
-        locked: false,
-        source: "NONE",
+        memberKind: "PARENT" as const,
+        label: pd.label,
+        startLocal: pd.startLocal,
+        endLocal: pd.endLocal,
+        isOff: !pd.working,
+        locked: pd.locked,
+        source: pd.source,
       };
     });
 
     const parentEntries = memberEntries.filter((m) => m.memberKind === "PARENT");
-    const bothParentsOff = parentEntries.length > 0 && parentEntries.every((m) => m.isOff);
+    // "Both off" must be positively known for EVERY parent - a parent with no
+    // rota and no shift for the day (source "NONE") is unknown, not off, so a
+    // half-configured household never gets a false "both parents off together".
+    const everyParentKnown =
+      parentEntries.length > 0 && parentEntries.every((m) => m.source !== "NONE");
+    const bothParentsOff = everyParentKnown && parentEntries.every((m) => m.isOff);
 
     days.push({
       date,
       members: memberEntries,
       events: eventsByDate.get(date) ?? [],
       bothParentsOff,
+      childcare: childcareForDay(date),
     });
     cursor = addDays(cursor, 1);
   }

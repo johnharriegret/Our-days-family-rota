@@ -5,6 +5,7 @@ import { Heart } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
+import { ChildcareBanner } from "@/components/ChildcareBanner";
 import type { CalendarDayView } from "@/lib/clientTypes";
 
 function todayStr(): string {
@@ -54,8 +55,17 @@ export default function TodayPage() {
   if (error) return <div className="page-body"><div className="error-banner">{error}</div></div>;
   if (!today) return null;
 
+  const needsSetup = today.members.some((m) => m.source === "NONE");
+
   return (
     <div className="page-body">
+      {needsSetup && (
+        <div className="setup-banner">
+          Finish setting up your family so the calendar and childcare checks work — add everyone&apos;s
+          shifts in <a href="/settings">Settings</a>.
+        </div>
+      )}
+
       <div className="card">
         <h2>Today · {friendlyDate(today.date)}</h2>
         {today.members.map((m) => (
@@ -72,6 +82,7 @@ export default function TodayPage() {
             <Heart size={13} /> Both off today
           </div>
         )}
+        <ChildcareBanner childcare={today.childcare} />
       </div>
 
       {nextTogether && (
