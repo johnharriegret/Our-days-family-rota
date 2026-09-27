@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Calendar, CalendarDays, Plus, Settings2, Sun } from "lucide-react";
+import { CalendarDays, LogOut, Plus, Settings2 } from "lucide-react";
 import { AddSheet } from "@/components/AddSheet";
 import { apiFetch } from "@/lib/client";
 import { emitCalendarChanged } from "@/lib/refresh";
@@ -17,9 +17,7 @@ function todayStr(): string {
 }
 
 const TABS = [
-  { href: "/today", label: "Today", icon: Sun },
-  { href: "/week", label: "Week", icon: Calendar },
-  { href: "/month", label: "Month", icon: CalendarDays },
+  { href: "/month", label: "Calendar", icon: CalendarDays },
   { href: "/settings", label: "Settings", icon: Settings2 },
 ];
 
@@ -41,8 +39,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="brand-mark">☀️</div>
           Our Days
         </div>
-        <button className="btn btn-ghost" onClick={logout} style={{ padding: "6px 10px", minHeight: "auto", fontSize: 13 }}>
-          Sign out
+        <button className="header-action" onClick={logout} aria-label="Sign out">
+          <LogOut size={17} /> <span>Sign out</span>
         </button>
       </div>
 

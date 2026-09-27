@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Brush, Check, ChevronLeft, ChevronRight, Sparkles, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Brush, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Sparkles, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
@@ -80,6 +80,10 @@ function childMarkerColor(name: string, fallback: string): string {
   if (lower.includes("clark")) return "#176b4d";
   if (lower.includes("thea")) return "#a63d45";
   return `var(--${fallback})`;
+}
+
+function childMarkerStyle(name: string, fallback: string): CSSProperties {
+  return { "--marker-color": childMarkerColor(name, fallback) } as CSSProperties;
 }
 
 // The Monday of each week that has any day inside this month.
@@ -211,7 +215,6 @@ export default function MonthPage() {
     setDeletingShiftId(shiftId);
     try {
       await apiFetch(`/api/shifts/${shiftId}`, { method: "DELETE" });
-      setEditingDay(null);
       emitCalendarChanged();
     } catch (err) {
       setQuickFillError(err instanceof Error ? err.message : "Couldn't remove that shift");
@@ -243,6 +246,12 @@ export default function MonthPage() {
     const to = addDays(monthStart, last - 1);
     const data = await apiFetch<{ days: CalendarDayView[] }>(`/api/calendar?from=${monthStart}&to=${to}`);
     setDays(data.days);
+    setEditingDay((current) =>
+      data.days.find((day) => day.date === current?.date)
+      ?? data.days.find((day) => day.date === todayStr())
+      ?? data.days[0]
+      ?? null,
+    );
     setLoading(false);
   }, [monthStart]);
 
@@ -255,41 +264,39 @@ export default function MonthPage() {
   const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(
     new Date(`${monthStart}T12:00:00Z`),
   );
+  const monthChildren = days[0]?.members.filter((member) => member.memberKind === "CHILD") ?? [];
+  const conflictCount = days.filter((day) => day.childcare?.status === "CHILDCARE_NEEDED").length;
+  const togetherCount = days.filter((day) => day.bothParentsOff).length;
+
+  function goToToday() {
+    const today = todayStr();
+    setMonthStart(firstOfMonth(today));
+    setEditingDay(days.find((day) => day.date === today) ?? null);
+  }
 
   return (
-    <div className="page-body">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <button className="btn btn-ghost" onClick={() => setMonthStart((m) => addMonths(m, -1))} aria-label="Previous month">
-          <ChevronLeft size={22} />
-        </button>
-        <strong>{monthLabel}</strong>
-        <button className="btn btn-ghost" onClick={() => setMonthStart((m) => addMonths(m, 1))} aria-label="Next month">
-          <ChevronRight size={22} />
-        </button>
-      </div>
+    <div className="page-body month-page">
+      <section className="month-hero">
+        <div className="month-hero-copy">
+          <span className="month-eyebrow"><CalendarDays size={14} /> Family command centre</span>
+          <h1>{monthLabel}</h1>
+          <p>{conflictCount > 0 ? `${conflictCount} day${conflictCount === 1 ? "" : "s"} need a childcare check` : "Childcare cover looks clear"} · {togetherCount} days off together</p>
+        </div>
+        <div className="month-switcher" aria-label="Choose month">
+          <button onClick={() => setMonthStart((m) => addMonths(m, -1))} aria-label="Previous month"><ChevronLeft size={20} /></button>
+          <button className="today-jump" onClick={goToToday}>Today</button>
+          <button onClick={() => setMonthStart((m) => addMonths(m, 1))} aria-label="Next month"><ChevronRight size={20} /></button>
+        </div>
+      </section>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button
-          className="btn btn-primary"
-          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
-          onClick={() => setPlanScope("month")}
-        >
-          <Sparkles size={17} /> Plan the month
-        </button>
-        <button
-          className="btn btn-secondary"
-          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
-          onClick={() => setPlanScope("year")}
-        >
-          <Sparkles size={17} /> Plan the year
-        </button>
+      <div className="calendar-actions">
+        <button className="calendar-action primary" onClick={() => setPlanScope("month")}><Sparkles size={17} /><span><strong>Plan month</strong><small>Suggest Jeanicar&apos;s shifts</small></span></button>
+        <button className="calendar-action" onClick={quickFillOn ? cancelQuickFill : startQuickFill}><Brush size={17} /><span><strong>{quickFillOn ? "Close quick fill" : "Quick fill"}</strong><small>Paint shifts onto dates</small></span></button>
+        <button className="calendar-action compact" onClick={() => setPlanScope("year")}><Sparkles size={16} /><span><strong>Plan year</strong></span></button>
+        {parents.some((parent) => /jean/i.test(parent.name) || parent.icon === "mum") && (
+          <button className="calendar-action compact danger" disabled={clearingMonth} onClick={clearWifeMonth}><Trash2 size={16} /><span><strong>{clearingMonth ? "Clearing…" : "Clear month"}</strong></span></button>
+        )}
       </div>
-
-      {parents.some((parent) => /jean/i.test(parent.name) || parent.icon === "mum") && (
-        <button className="btn btn-ghost btn-block" disabled={clearingMonth} onClick={clearWifeMonth} style={{ color: "var(--bad)", borderColor: "color-mix(in srgb, var(--bad) 30%, var(--line))", marginTop: -6, marginBottom: 14 }}>
-          {clearingMonth ? "Clearing Jeanicar's month…" : "Clear Jeanicar's editable shifts for this month"}
-        </button>
-      )}
 
       {planScope && (
         <PlanWeekSheet
@@ -299,9 +306,33 @@ export default function MonthPage() {
         />
       )}
 
-      {loading && <div className="empty-state">Loading…</div>}
+      {quickFillOn && parents.length > 0 && (
+        <div className="card quick-fill-panel">
+          <div className="quick-fill-heading"><div><strong>Quick fill</strong><span>Choose who and what, then tap every date you want to paint.</span></div><button className="icon-button" aria-label="Close quick fill" onClick={cancelQuickFill}><X size={18} /></button></div>
+          {quickFillError && <div className="error-banner">{quickFillError}</div>}
+          <div className="quick-fill-controls">
+            <div><span className="control-label">Who?</span><div className="choice-row">{parents.map((p) => <button key={p.id} className={`choice-chip${selectedOwnerId === p.id ? " selected" : ""}`} onClick={() => setSelectedOwnerId(p.id)}><MemberAvatar icon={p.icon} colorToken={p.colorToken} size={18} />{p.name}</button>)}</div></div>
+            {selectedOwnerId && <div><span className="control-label">What?</span><div className="choice-row">{(Object.keys(ACTION_LABELS) as QuickFillAction[]).map((action) => {
+              const member = parents.find((p) => p.id === selectedOwnerId)!;
+              const cfg = resolveQuickShiftConfig(member);
+              const swatch = action === "DAY" ? cfg.dayColor : action === "NIGHT" ? cfg.nightColor : action === "HOLIDAY" ? "var(--family)" : "var(--muted)";
+              return <button key={action} className={`choice-chip${selectedAction === action ? " selected" : ""}`} style={{ "--choice-color": swatch } as CSSProperties} onClick={() => setSelectedAction(action)}><i style={{ background: swatch }} />{ACTION_LABELS[action]}</button>;
+            })}</div></div>}
+          </div>
+          <div className="quick-fill-footer"><span>{selectedOwnerId && selectedAction ? `${pending.size || "No"} date${pending.size === 1 ? "" : "s"} marked` : "Pick a person and shift type to begin"}</span><button className="btn btn-primary" disabled={saving || pending.size === 0} onClick={saveQuickFill}><Check size={16} />{saving ? "Saving…" : `Save${pending.size ? ` ${pending.size}` : ""}`}</button></div>
+        </div>
+      )}
 
-      <div className="card">
+      {loading && <div className="empty-state">Building your month…</div>}
+
+      <div className="calendar-workspace">
+      <section className="calendar-card">
+        <div className="calendar-card-head">
+          <div><strong>At a glance</strong><span>Solid = school · ring = home</span></div>
+          <div className="calendar-legend">
+            {monthChildren.map((child) => <span key={child.memberId}><i className="legend-dot" style={childMarkerStyle(child.name, child.colorToken)} />{child.name.split(" ")[0]}</span>)}
+          </div>
+        </div>
         <div className="month-grid" style={{ marginBottom: 6 }}>
           {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
             <div key={i} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--muted)" }}>
@@ -328,15 +359,15 @@ export default function MonthPage() {
             const hasBankHoliday = children.some((child) => /bank holiday/i.test(child.label));
             const insetChildren = children.filter((child) => /inset/i.test(child.label));
             return (
-              <div
+              <button
+                type="button"
                 key={day.date}
-                className={`month-cell${hasConflict ? " conflict" : ""}${holidayClass}`}
+                className={`month-cell${hasConflict ? " conflict" : ""}${holidayClass}${isToday ? " today" : ""}${editingDay?.date === day.date ? " selected" : ""}`}
                 style={{
-                  ...(isToday ? { outline: "2px solid var(--accent)" } : undefined),
                   ...(mark ? { boxShadow: `inset 0 0 0 3px ${pendingColor(mark)}` } : undefined),
-                  cursor: "pointer",
                 }}
                 title={titleLines.join("\n")}
+                aria-pressed={editingDay?.date === day.date}
                 onClick={canPaint ? () => tapDate(day.date) : () => setEditingDay(day)}
               >
                 <span className="month-cell-daynum">{dayNum}</span>
@@ -349,7 +380,7 @@ export default function MonthPage() {
                   })}
                 </div>
                 <div className="child-marker-row" aria-label="School status">
-                  {children.map((child) => <span key={child.memberId} className={`child-school-dot${child.label.startsWith("School") ? " at-school" : " home"}`} style={{ background: childMarkerColor(child.name, child.colorToken) }} title={`${child.name}: ${child.label}`} />)}
+                  {children.map((child) => <span key={child.memberId} className={`child-school-dot${child.label.startsWith("School") ? " at-school" : " home"}`} style={childMarkerStyle(child.name, child.colorToken)} title={`${child.name}: ${child.label}`} />)}
                 </div>
                 <div className="exception-marker-row" aria-label="School exceptions">
                   {hasBankHoliday && <span className="exception-marker bank" title="Bank holiday">BH</span>}
@@ -368,27 +399,29 @@ export default function MonthPage() {
                     }}
                   />
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
-      </div>
-      <p style={{ color: "var(--muted)", fontSize: 12.5, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 4 }}>
-        <span>Tap a day to see who&apos;s doing what or remove a saved shift.</span>
-        <span>· red dot = childcare needed.</span>
-      </p>
+        <div className="calendar-footnote"><span><i className="conflict-key" /> Childcare check</span><span><i className="holiday-key" /> Annual leave</span><span>Tap a date for the full day</span></div>
+      </section>
 
       {editingDay && (
-        <div className="card" style={{ marginTop: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <strong>{new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${editingDay.date}T12:00:00Z`))}</strong>
-            <button className="btn btn-ghost" onClick={() => setEditingDay(null)} aria-label="Close day editor" style={{ padding: 6, minHeight: "auto" }}><X size={18} /></button>
+        <aside className="day-inspector">
+          <div className="day-inspector-head">
+            <span>{new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(new Date(`${editingDay.date}T12:00:00Z`))}</span>
+            <strong>{new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" }).format(new Date(`${editingDay.date}T12:00:00Z`))}</strong>
+            {editingDay.bothParentsOff && <div className="together-callout"><Heart size={14} /> Day off together</div>}
           </div>
+          {editingDay.childcare?.status === "CHILDCARE_NEEDED" && <div className="day-warning">{editingDay.childcare.explanation}</div>}
+          <div className="inspector-section"><div className="inspector-title"><Clock3 size={15} /> Parents</div>
           {editingDay.members.filter((member) => member.memberKind === "PARENT").map((member) => {
             const shiftId = member.shiftId;
-            return <div className="row" key={member.memberId}>
-              <div style={{ flex: 1 }}>
-                <div className="row-title">{member.name} · {member.label}</div>
+            return <div className="inspector-row" key={member.memberId}>
+              <MemberAvatar icon={member.icon} colorToken={member.colorToken} size={34} />
+              <div className="inspector-row-copy">
+                <div className="row-title">{member.name}</div>
+                <div className="shift-detail">{member.label}</div>
                 <div className="row-sub">{member.source === "PATTERN" ? "Repeating rota — edit the pattern in Settings" : member.shiftId ? "Saved shift — safe to remove" : "No saved shift"}</div>
               </div>
               {shiftId && !member.locked && (
@@ -398,106 +431,20 @@ export default function MonthPage() {
               )}
             </div>;
           })}
-          {editingDay.members.filter((member) => member.memberKind === "CHILD").map((member) => <div className="row-sub" key={member.memberId}>{member.name}: {member.label}</div>)}
+          </div>
+          <div className="inspector-section"><div className="inspector-title"><GraduationCap size={16} /> Children</div>
+          {editingDay.members.filter((member) => member.memberKind === "CHILD").map((member) => <div className="child-detail" key={member.memberId}><i className={`child-school-dot${member.label.startsWith("School") ? " at-school" : " home"}`} style={childMarkerStyle(member.name, member.colorToken)} /><span><strong>{member.name.split(" ")[0]}</strong><small>{member.label}</small></span></div>)}
+          </div>
           {editingDay.events.length > 0 && (
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
-              <strong style={{ fontSize: 13 }}>Appointments &amp; activities</strong>
-              {editingDay.events.map((event) => <div className="row-sub" key={event.id}>{event.startLocal ? `${event.startLocal} · ` : ""}{event.title}</div>)}
+            <div className="inspector-section">
+              <div className="inspector-title"><CalendarDays size={15} /> Appointments &amp; activities</div>
+              {editingDay.events.map((event) => <div className="event-detail" key={event.id}><strong>{event.startLocal ?? "All day"}</strong><span>{event.title}</span></div>)}
             </div>
           )}
-        </div>
+        </aside>
       )}
+      </div>
 
-      {/* Quick-fill (paint) tool: pick a person, pick Days/Nights/Off/Holiday,
-          then tap dates above to mark them - tap again to undo - then Save. */}
-      {parents.length > 0 && (
-        <div className="card" style={{ marginTop: 4 }}>
-          {!quickFillOn ? (
-            <button
-              className="btn btn-secondary btn-block"
-              onClick={startQuickFill}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
-            >
-              <Brush size={17} /> Quick fill — paint shifts straight onto the calendar
-            </button>
-          ) : (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <strong style={{ fontSize: 14 }}>Quick fill</strong>
-                <button className="btn btn-ghost" aria-label="Close quick fill" style={{ padding: 6, minHeight: "auto" }} onClick={cancelQuickFill}>
-                  <X size={18} />
-                </button>
-              </div>
-
-              {quickFillError && <div className="error-banner">{quickFillError}</div>}
-
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>Who?</div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-                {parents.map((p) => (
-                  <button
-                    key={p.id}
-                    className="choice-btn"
-                    style={selectedOwnerId === p.id ? { borderColor: "var(--accent)", background: "var(--accent-soft)" } : undefined}
-                    onClick={() => setSelectedOwnerId(p.id)}
-                  >
-                    <MemberAvatar icon={p.icon} colorToken={p.colorToken} size={18} />
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-
-              {selectedOwnerId && (
-                <>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>What?</div>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-                    {(Object.keys(ACTION_LABELS) as QuickFillAction[]).map((action) => {
-                      const member = parents.find((p) => p.id === selectedOwnerId)!;
-                      const cfg = resolveQuickShiftConfig(member);
-                      const swatch = action === "DAY" ? cfg.dayColor : action === "NIGHT" ? cfg.nightColor : action === "HOLIDAY" ? "var(--family)" : "var(--muted)";
-                      const active = selectedAction === action;
-                      return (
-                        <button
-                          key={action}
-                          className="choice-btn"
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            ...(active ? { borderColor: swatch, background: `${swatch}22`, color: swatch } : undefined),
-                          }}
-                          onClick={() => setSelectedAction(action)}
-                        >
-                          <span style={{ width: 10, height: 10, borderRadius: "50%", background: swatch, flexShrink: 0 }} />
-                          {ACTION_LABELS[action]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-
-              {selectedOwnerId && selectedAction && (
-                <p style={{ color: "var(--muted)", fontSize: 12.5, marginBottom: 12 }}>
-                  Tap dates above to mark them {ACTION_LABELS[selectedAction].toLowerCase()} — tap a marked date again to
-                  undo it. {pending.size > 0 ? `${pending.size} marked. ` : ""}Nothing changes until you save.
-                </p>
-              )}
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn btn-ghost" onClick={cancelQuickFill}>Cancel</button>
-                <button
-                  className="btn btn-primary"
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-                  disabled={saving || pending.size === 0}
-                  onClick={saveQuickFill}
-                >
-                  <Check size={16} /> {saving ? "Saving…" : `Save${pending.size > 0 ? ` ${pending.size}` : ""}`}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
     </div>
   );
 }
