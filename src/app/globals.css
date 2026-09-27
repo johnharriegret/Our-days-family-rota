@@ -389,11 +389,16 @@ a { color: inherit; text-decoration: none; }
 
 .month-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* minmax(0, 1fr), not a bare 1fr: a bare 1fr track won't shrink below its
+     content's min-content width, so a cell with un-wrappable pill text (e.g.
+     "HG") was pushing every column wider than its fair share and bleeding
+     the whole grid off the right edge on a phone-width screen. */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
 }
 .month-cell {
   aspect-ratio: 1;
+  min-width: 0;
   border-radius: 10px;
   background: var(--bg);
   display: flex;
