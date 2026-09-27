@@ -107,6 +107,42 @@ function shiftOf(option: MumShiftOption | null): ShiftInterval | null {
   return option ? { startLocal: option.startLocal, endLocal: option.endLocal } : null;
 }
 
+function toMinutesOfDay(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** A shift's end, in minutes past the midnight it STARTED on - crosses past
+ * 1440 for an overnight shift (end <= start, same convention as intervals.ts). */
+function shiftEndAbsolute(shift: ShiftInterval): number {
+  const start = toMinutesOfDay(shift.startLocal);
+  let end = toMinutesOfDay(shift.endLocal);
+  if (end <= start) end += 1440;
+  return end;
+}
+
+/**
+ * Minutes of rest between the end of a shift worked the day before and the
+ * start of a shift worked today - negative means they actually overlap.
+ * Returns null when there's nothing to check (either day is off).
+ */
+function restMinutes(dayBefore: ShiftInterval | null, today: ShiftInterval | null): number | null {
+  if (!dayBefore || !today) return null;
+  const dayBeforeEnd = shiftEndAbsolute(dayBefore);
+  const todayStart = 1440 + toMinutesOfDay(today.startLocal); // today's midnight is +1440 from the day before's
+  return todayStart - dayBeforeEnd;
+}
+
+/**
+ * Minimum rest the optimiser will ever leave between two shifts, in minutes.
+ * 11 hours mirrors the UK Working Time Regulations' statutory daily rest
+ * minimum - a real, physical constraint the optimiser must never violate, not
+ * just something to rank lower. Without this it could (and did, in practice -
+ * this is the fix for a real live-use bug) suggest a night shift immediately
+ * followed by a long day shift the next morning, which even overlaps.
+ */
+export const MIN_REST_MINUTES = 11 * 60;
+
 function evaluate(
   input: OptimiserInput,
   chosen: (MumShiftOption | null)[],
@@ -241,6 +277,13 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
   // DFS over unlocked days, assigning OFF or one allowed shift type, pruning
   // branches that can't land within one shift of the target. Deterministic
   // order (days ascending, options in their given order) so results are stable.
+  // The actual shift (locked or already-chosen-this-branch) on a given day,
+  // used to check rest against a neighbour that isn't itself a DFS position.
+  function actualShiftAt(dayIndex: number): ShiftInterval | null {
+    const day = days[dayIndex];
+    return day.locked ? day.locked.shift : shiftOf(base[dayIndex]);
+  }
+
   const candidates: (MumShiftOption | null)[][] = [];
   const base: (MumShiftOption | null)[] = days.map(() => null);
 
@@ -257,9 +300,22 @@ export function planMumWeek(input: OptimiserInput): OptimiserResult {
     if (running > target + maxOptionPaid) return;
 
     const dayIndex = unlockedIndexes[pos];
+    const dayBeforeShift = dayIndex > 0 ? actualShiftAt(dayIndex - 1) : input.priorMumShift;
+    const nextDayLockedShift = dayIndex + 1 < days.length ? days[dayIndex + 1].locked?.shift ?? null : null;
+
     base[dayIndex] = null;
     dfs(pos + 1, running);
     for (const option of shiftOptions) {
+      const todayShift = shiftOf(option);
+      // Hard constraint, never just ranked lower: physically impossible rest
+      // (e.g. a night shift straight into the next morning's long day) is
+      // never offered at all, whether the clash is with the day before or -
+      // since a locked day is never itself a DFS step - the day after.
+      const restBefore = restMinutes(dayBeforeShift, todayShift);
+      if (restBefore !== null && restBefore < MIN_REST_MINUTES) continue;
+      const restAfter = restMinutes(todayShift, nextDayLockedShift);
+      if (restAfter !== null && restAfter < MIN_REST_MINUTES) continue;
+
       base[dayIndex] = option;
       dfs(pos + 1, running + option.paidMinutes);
     }
