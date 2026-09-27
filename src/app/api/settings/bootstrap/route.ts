@@ -24,6 +24,7 @@ export async function GET() {
     const [members, schools, childcareRule, appearance] = await Promise.all([
       prisma.familyMember.findMany({
         where: { householdId, archived: false },
+        include: { user: { select: { id: true, email: true } } },
         orderBy: { kind: "asc" },
       }),
       prisma.school.findMany({
@@ -64,6 +65,11 @@ export async function GET() {
       (shiftTypesByOwnerId[t.ownerId] ??= []).push(t);
     }
 
-    return NextResponse.json({ members, schools, childcareRule, patternsByOwnerId, shiftTypesByOwnerId, togetherColor });
+    const membersOut = members.map(({ user, ...m }) => ({
+      ...m,
+      login: user ? { id: user.id, email: user.email } : null,
+    }));
+
+    return NextResponse.json({ members: membersOut, schools, childcareRule, patternsByOwnerId, shiftTypesByOwnerId, togetherColor });
   });
 }

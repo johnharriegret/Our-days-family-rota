@@ -8,10 +8,12 @@ export async function GET() {
     const session = await requireSession();
     const members = await prisma.familyMember.findMany({
       where: { householdId: session.householdId, archived: false },
-      include: { school: true },
+      include: { school: true, user: { select: { id: true, email: true } } },
       orderBy: { kind: "asc" },
     });
-    return NextResponse.json({ members });
+    return NextResponse.json({
+      members: members.map(({ user, ...m }) => ({ ...m, login: user ? { id: user.id, email: user.email } : null })),
+    });
   });
 }
 

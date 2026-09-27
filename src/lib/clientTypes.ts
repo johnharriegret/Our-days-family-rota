@@ -15,6 +15,8 @@ export type FamilyMember = {
   dayEndLocal?: string | null;
   nightStartLocal?: string | null;
   nightEndLocal?: string | null;
+  /** Their own sign-in, if one's been set up for them - null until then. */
+  login?: { id: string; email: string } | null;
 };
 
 export type ShiftType = {

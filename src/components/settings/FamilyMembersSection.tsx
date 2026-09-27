@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Palette, Pencil } from "lucide-react";
+import { KeyRound, Palette, Pencil } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { MEMBER_COLORS } from "@/lib/constants";
 import { MemberAvatar } from "@/components/memberIcon";
@@ -37,6 +37,53 @@ export function FamilyMembersSection({
     nightEndLocal: string;
   } | null>(null);
   const [colorBusy, setColorBusy] = useState(false);
+
+  // Give an existing family member their own sign-in, separate from whoever
+  // ran /setup.
+  const [editingLoginFor, setEditingLoginFor] = useState<string | null>(null);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  function openLoginEditor(member: FamilyMember) {
+    setEditingLoginFor(member.id);
+    setLoginEmail("");
+    setLoginPassword("");
+    setLoginError(null);
+  }
+
+  async function saveLogin(member: FamilyMember) {
+    if (!loginEmail.trim() || !loginPassword) return setLoginError("An email and password are required");
+    if (loginPassword.length < 8) return setLoginError("Password must be at least 8 characters");
+    setLoginBusy(true);
+    setLoginError(null);
+    try {
+      await apiFetch("/api/users", {
+        method: "POST",
+        body: JSON.stringify({ familyMemberId: member.id, email: loginEmail.trim(), password: loginPassword }),
+      });
+      setEditingLoginFor(null);
+      setLoginEmail("");
+      setLoginPassword("");
+      onChanged();
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  async function removeLogin(member: FamilyMember) {
+    if (!member.login) return;
+    setLoginBusy(true);
+    try {
+      await apiFetch(`/api/users/${member.login.id}`, { method: "DELETE" });
+      onChanged();
+    } finally {
+      setLoginBusy(false);
+    }
+  }
 
   // Edit an existing member's own details: name, and (child) date of birth /
   // school, or (parent) hard weekly hours requirement. Everything about a
@@ -159,6 +206,7 @@ export function FamilyMembersSection({
               <div className="row-sub">
                 {m.kind === "PARENT" ? "Parent" : "Child"}
                 {m.requiredWeeklyMinutes ? ` · ${(m.requiredWeeklyMinutes / 60).toFixed(1)}h/week` : ""}
+                {m.login ? ` · Signs in as ${m.login.email}` : ""}
               </div>
             </div>
             <button
@@ -179,7 +227,67 @@ export function FamilyMembersSection({
                 <Palette size={16} />
               </button>
             )}
+            {!m.login && (
+              <button
+                className="btn btn-ghost"
+                aria-label={`Give ${m.name} their own login`}
+                style={{ minHeight: "auto", padding: 8 }}
+                onClick={() => (editingLoginFor === m.id ? setEditingLoginFor(null) : openLoginEditor(m))}
+              >
+                <KeyRound size={16} />
+              </button>
+            )}
           </div>
+
+          {editingLoginFor === m.id && (
+            <div style={{ padding: "10px 0 16px", borderBottom: "1px solid var(--line)", marginBottom: 4 }}>
+              {loginError && <div className="error-banner">{loginError}</div>}
+              <p style={{ color: "var(--muted)", fontSize: 12.5, marginBottom: 10 }}>
+                Give {m.name} their own sign-in, separate from yours, so they can open Our Days on their own
+                phone.
+              </p>
+              <div className="field">
+                <label>Email</label>
+                <input
+                  type="email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="e.g. jeanicar@example.com"
+                  autoFocus
+                />
+              </div>
+              <div className="field">
+                <label>Password (at least 8 characters)</label>
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="They can be given this to sign in with"
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" onClick={() => { setEditingLoginFor(null); setLoginError(null); }}>
+                  Cancel
+                </button>
+                <button className="btn btn-primary" style={{ flex: 1 }} disabled={loginBusy} onClick={() => saveLogin(m)}>
+                  {loginBusy ? "Saving…" : "Create login"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {m.login && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+              <button
+                className="btn btn-ghost"
+                style={{ minHeight: "auto", padding: "4px 8px", fontSize: 12.5, color: "var(--bad)" }}
+                disabled={loginBusy}
+                onClick={() => removeLogin(m)}
+              >
+                Remove login
+              </button>
+            </div>
+          )}
 
           {editingDetailsFor === m.id && detailsDraft && (
             <div style={{ padding: "10px 0 16px", borderBottom: "1px solid var(--line)", marginBottom: 4 }}>
