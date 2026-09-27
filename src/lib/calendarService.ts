@@ -11,18 +11,15 @@ import {
   nonSchoolDayReason,
   resolvePatternDay,
 } from "./engine";
+import { activePattern, childInfoFor } from "./householdContext";
 import { classifyShiftKind, resolveQuickShiftConfig } from "./quickShift";
-import type { AdultDay, ChildDayInfo, TimelineDay } from "./engine";
+import type { AdultDay, TimelineDay } from "./engine";
 import type { ChildcareResult, ShiftPatternSpec } from "./engine/types";
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-}
 
 /**
  * Turns a child's non-school-day reason into the label shown when they're
@@ -52,15 +49,6 @@ function homeLabelFor(
   }
 }
 
-/** Whole-number age on `date` from an ISO date-of-birth, or null if unknown. */
-function ageOn(date: string, dob: string | null): number | null {
-  if (!dob) return null;
-  const [y, m, d] = date.split("-").map(Number);
-  const [by, bm, bd] = dob.slice(0, 10).split("-").map(Number);
-  let age = y - by;
-  if (m < bm || (m === bm && d < bd)) age -= 1;
-  return age;
-}
 
 export type MemberDayEntry = {
   memberId: string;
@@ -159,16 +147,6 @@ export async function getCalendarRange(
     patternVersionsByOwner.set(p.ownerId, list);
   }
 
-  function activePatternFor(ownerId: string, date: string): ShiftPatternSpec | null {
-    const versions = patternVersionsByOwner.get(ownerId);
-    if (!versions) return null;
-    let active: ShiftPatternSpec | null = null;
-    for (const v of versions) {
-      if (v.effectiveFrom <= date) active = v.spec;
-      else break;
-    }
-    return active;
-  }
 
   const shiftTypes = await prisma.shiftType.findMany({ where: { householdId } });
   const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
@@ -256,7 +234,7 @@ export async function getCalendarRange(
         label: type?.name ?? (working ? "Custom shift" : isLeave ? "Annual leave" : "Off"),
       };
     }
-    const pattern = activePatternFor(memberId, date);
+    const pattern = activePattern(patternVersionsByOwner, memberId, date);
     if (pattern) {
       const resolved = resolvePatternDay(date, pattern);
       const working = resolved.kind !== "O";
@@ -298,29 +276,6 @@ export async function getCalendarRange(
   const childMembers = members.filter((m) => m.kind === "CHILD");
   const parentMembers = members.filter((m) => m.kind === "PARENT");
 
-  /** One day's facts for every child, in the engine's plain shape. */
-  function childInfoFor(date: string): ChildDayInfo[] {
-    return childMembers.map((c) => {
-      const terms =
-        c.school?.terms.map((t) => ({
-          startDate: toDateStr(t.startDate),
-          endDate: toDateStr(t.endDate),
-          type: t.type,
-          label: t.label,
-          weekdays: t.weekdays,
-        })) ?? [];
-      const attendsToday = c.school ? isSchoolDay(date, terms) : false;
-      const reason = c.school && !attendsToday ? nonSchoolDayReason(date, terms) : null;
-      return {
-        hasSchool: Boolean(c.school),
-        attendsToday,
-        schoolStartMinutes: c.school ? toMinutes(c.school.startLocal) : 0,
-        schoolEndMinutes: c.school ? toMinutes(c.school.endLocal) : 0,
-        age: ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null),
-        nonSchoolReasonKind: reason?.kind ?? null,
-      };
-    });
-  }
 
   // Childcare is judged once, over one continuous timeline covering the
   // requested range plus a context day either side - never day by day, and
@@ -343,7 +298,7 @@ export async function getCalendarRange(
   for (let d = contextFrom; d <= contextTo; d = addDays(d, 1)) windowDates.push(d);
 
   const timelineDays: TimelineDay[] = windowDates.map((date) =>
-    buildTimelineDay(date, childInfoFor(date), ruleConfig),
+    buildTimelineDay(date, childInfoFor(childMembers, date), ruleConfig),
   );
   const adults: AdultDay[][] = parentMembers.map((p) =>
     windowDates.map((date) => {

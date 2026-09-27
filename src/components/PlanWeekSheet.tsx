@@ -38,12 +38,14 @@ type PlanConflict = {
   explanation: string;
 };
 type WeekPlan = { days: PlanDay[]; metrics: PlanMetrics; conflicts: PlanConflict[] };
+type PlanDiagnostics = { exhaustive: boolean; truncated: boolean; generated: number; safe: number };
 type PlanResponse = {
   best: WeekPlan | null;
   alternatives: WeekPlan[];
   /** the closest plan when every option has a childcare conflict - never a safe suggestion. */
   bestWithConflicts: WeekPlan | null;
   message?: string;
+  diagnostics: PlanDiagnostics;
   ownerId: string;
   ownerName: string;
   otherParentName: string | null;
@@ -188,6 +190,12 @@ export function PlanWeekSheet({
   // How many of the weeks asked for actually have a safe plan. `best` is only
   // ever set for a childcare-safe plan, so this is simply a count of those.
   const overall = { safeWeeks: plans.filter((p) => p.best).length };
+  const exhaustiveNoSafePlans = plans.filter((p) => !p.best).every((p) => p.diagnostics.exhaustive);
+  const noSafeSearchSummary = (results: PlanResponse[]) => {
+    const generated = results.reduce((sum, p) => sum + p.diagnostics.generated, 0);
+    const safe = results.reduce((sum, p) => sum + p.diagnostics.safe, 0);
+    return `The search was too large to check exhaustively (${generated} options checked; ${safe} safe). See the reasons below.`;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -302,7 +310,9 @@ export function PlanWeekSheet({
                 ? "This plan keeps the children covered all week."
                 : `All ${plans.length} weeks keep the children covered.`
               : overall.safeWeeks === 0
-                ? "No safe plan was found. Every option leaves a gap where nobody is available — see the reasons below."
+                ? exhaustiveNoSafePlans
+                  ? "No safe plan was found. Every option leaves a gap where nobody is available — see the reasons below."
+                  : noSafeSearchSummary(plans)
                 : `${overall.safeWeeks} of ${plans.length} weeks have a safe plan. The rest leave a gap where nobody is available — see the reasons below.`}
           </div>
         )}

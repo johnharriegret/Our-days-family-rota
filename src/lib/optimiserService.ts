@@ -6,12 +6,11 @@ import {
   addDays,
   buildTimelineDay,
   evaluateTimeline,
-  isSchoolDay,
   minutesOrDefault,
-  nonSchoolDayReason,
   planMumWeek,
   resolvePatternDay,
 } from "./engine";
+import { activePattern, childInfoFor } from "./householdContext";
 import type {
   AdultDay,
   ChildDayInfo,
@@ -37,18 +36,6 @@ const CONTEXT_DAYS = 1;
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-}
-function ageOn(date: string, dob: string | null): number | null {
-  if (!dob) return null;
-  const [y, m, d] = date.split("-").map(Number);
-  const [by, bm, bd] = dob.slice(0, 10).split("-").map(Number);
-  let age = y - by;
-  if (m < bm || (m === bm && d < bd)) age -= 1;
-  return age;
 }
 
 export type MumWeekPlan = OptimiserResult & {
@@ -158,16 +145,7 @@ async function loadHouseholdContext(
     });
     versionsByOwner.set(p.ownerId, list);
   }
-  function activePattern(id: string, date: string): ShiftPatternSpec | null {
-    const versions = versionsByOwner.get(id);
-    if (!versions) return null;
-    let active: ShiftPatternSpec | null = null;
-    for (const v of versions) {
-      if (v.effectiveFrom <= date) active = v.spec;
-      else break;
-    }
-    return active;
-  }
+  const ownersWithShiftTypes = new Set(allShiftTypes.map((type) => type.ownerId));
 
   const shifts = await prisma.workShift.findMany({
     where: {
@@ -186,7 +164,7 @@ async function loadHouseholdContext(
       const endLocal = type?.endLocal ?? manual.customEnd ?? null;
       return { known: true, shift: startLocal && endLocal ? { startLocal, endLocal } : null };
     }
-    const pattern = activePattern(id, date);
+    const pattern = activePattern(versionsByOwner, id, date);
     if (pattern) {
       const resolved = resolvePatternDay(date, pattern);
       return {
@@ -196,30 +174,10 @@ async function loadHouseholdContext(
           : null,
       };
     }
+    // A parent who uses one-tap shift types has a known day off whenever no
+    // shift is saved. Keep this in lockstep with calendarService.parentWorkFor.
+    if (ownersWithShiftTypes.has(id)) return { known: true, shift: null };
     return { known: false, shift: null };
-  }
-
-  function childInfoFor(date: string): ChildDayInfo[] {
-    return children.map((c) => {
-      const terms =
-        c.school?.terms.map((t) => ({
-          startDate: toDateStr(t.startDate),
-          endDate: toDateStr(t.endDate),
-          type: t.type,
-          label: t.label,
-          weekdays: t.weekdays,
-        })) ?? [];
-      const attendsToday = c.school ? isSchoolDay(date, terms) : false;
-      const reason = c.school && !attendsToday ? nonSchoolDayReason(date, terms) : null;
-      return {
-        hasSchool: Boolean(c.school),
-        attendsToday,
-        schoolStartMinutes: c.school ? toMinutes(c.school.startLocal) : 0,
-        schoolEndMinutes: c.school ? toMinutes(c.school.endLocal) : 0,
-        age: ageOn(date, c.dateOfBirth ? toDateStr(c.dateOfBirth) : null),
-        nonSchoolReasonKind: reason?.kind ?? null,
-      };
-    });
   }
 
   return {
@@ -241,10 +199,10 @@ async function loadHouseholdContext(
     shiftOptions,
     shiftTypeById,
     ownerActiveTypeIds,
-    activePattern,
+    activePattern: (id, date) => activePattern(versionsByOwner, id, date),
     workingInterval,
     shiftByKey,
-    childInfoFor,
+    childInfoFor: (date) => childInfoFor(children, date),
   };
 }
 

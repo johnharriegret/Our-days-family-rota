@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import { apiError, withApi } from "@/lib/api";
+import { normaliseTermWeekdays } from "@/lib/termWeekdays";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   return withApi(async () => {
@@ -30,10 +31,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         return apiError("Each block needs startDate, endDate, type and label", 422);
       }
       if (b.startDate > b.endDate) return apiError("startDate must be on or before endDate", 422);
-      const weekdays =
-        Array.isArray(b.weekdays) && b.weekdays.length > 0
-          ? b.weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
-          : [1, 2, 3, 4, 5];
+      const weekdays = b.type === "TERM" ? normaliseTermWeekdays(b.weekdays) : [1, 2, 3, 4, 5];
       data.push({
         schoolId,
         startDate: new Date(b.startDate),

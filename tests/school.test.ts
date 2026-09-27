@@ -2,6 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isSchoolDay, nonSchoolDayReason } from "../src/lib/engine/school.ts";
 import type { SchoolTermSpec } from "../src/lib/engine/types.ts";
+import { normaliseTermWeekdays } from "../src/lib/termWeekdays.ts";
+
+test("an empty or invalid TERM weekday list defaults to Monday-Friday", () => {
+  assert.deepEqual(normaliseTermWeekdays([]), [1, 2, 3, 4, 5]);
+  assert.deepEqual(normaliseTermWeekdays([99, -1]), [1, 2, 3, 4, 5]);
+});
 
 const terms: SchoolTermSpec[] = [
   { startDate: "2026-09-01", endDate: "2026-10-23", type: "TERM", label: "Autumn" },
