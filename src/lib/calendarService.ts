@@ -107,17 +107,40 @@ export async function getCalendarRange(
 ): Promise<CalendarDayView[]> {
   const fromDate = new Date(`${from}T00:00:00.000Z`);
   const toDate = new Date(`${to}T00:00:00.000Z`);
+  const contextFrom = addDays(from, -1);
+  const contextTo = addDays(to, 1);
 
   // The household's own timezone drives every wall-clock-to-real-time
   // conversion, so a gap that spans the night the clocks change is measured in
   // the hours it actually lasted.
-  const household = await prisma.household.findUnique({ where: { id: householdId } });
-
-  const members = await prisma.familyMember.findMany({
-    where: { householdId, archived: false },
-    include: { school: { include: { terms: true } } },
-    orderBy: { kind: "asc" },
-  });
+  // These reads are independent. Running them together matters on a serverless
+  // deployment backed by remote Postgres: the old serial version paid the
+  // network round-trip six times whenever somebody changed month.
+  const [household, members, shiftTypes, workShifts, childcareRule, events] = await Promise.all([
+    prisma.household.findUnique({ where: { id: householdId } }),
+    prisma.familyMember.findMany({
+      where: { householdId, archived: false },
+      include: { school: { include: { terms: true } } },
+      orderBy: { kind: "asc" },
+    }),
+    prisma.shiftType.findMany({ where: { householdId } }),
+    prisma.workShift.findMany({
+      where: {
+        householdId,
+        date: {
+          gte: new Date(`${contextFrom}T00:00:00.000Z`),
+          lte: new Date(`${contextTo}T00:00:00.000Z`),
+        },
+      },
+    }),
+    prisma.childcareRule.findFirst({
+      where: { householdId },
+      orderBy: { effectiveFrom: "desc" },
+    }),
+    prisma.event.findMany({
+      where: { householdId, date: { gte: fromDate, lte: toDate } },
+    }),
+  ]);
   const parentIds = members.filter((m) => m.kind === "PARENT").map((m) => m.id);
 
   // Load every version (including archived ones) so a rota correction made
@@ -149,8 +172,6 @@ export async function getCalendarRange(
     patternVersionsByOwner.set(p.ownerId, list);
   }
 
-
-  const shiftTypes = await prisma.shiftType.findMany({ where: { householdId } });
   const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
   // A parent who has at least one shift type configured (e.g. Mum's
   // EARLY/LATE/LONG DAY set) but no rota pattern and no manual entry for a
@@ -167,27 +188,7 @@ export async function getCalendarRange(
   // after it, and a conflict there is still caused by this range's shifts.
   // Without both, the first and last days of any view report a childcare
   // result computed from an incomplete picture.
-  const contextFrom = addDays(from, -1);
-  const contextTo = addDays(to, 1);
-  const workShifts = await prisma.workShift.findMany({
-    where: {
-      householdId,
-      date: {
-        gte: new Date(`${contextFrom}T00:00:00.000Z`),
-        lte: new Date(`${contextTo}T00:00:00.000Z`),
-      },
-    },
-  });
   const workShiftByKey = new Map(workShifts.map((s) => [`${s.ownerId}|${toDateStr(s.date)}`, s]));
-
-  const childcareRule = await prisma.childcareRule.findFirst({
-    where: { householdId },
-    orderBy: { effectiveFrom: "desc" },
-  });
-
-  const events = await prisma.event.findMany({
-    where: { householdId, date: { gte: fromDate, lte: toDate } },
-  });
   const eventsByDate = new Map<string, CalendarEventEntry[]>();
   for (const e of events) {
     const key = toDateStr(e.date);

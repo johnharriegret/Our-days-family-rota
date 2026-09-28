@@ -61,6 +61,9 @@ function hours(mins: number): string {
 function shortDay(date: string): string {
   return new Intl.DateTimeFormat("en-GB", { weekday: "short" }).format(new Date(`${date}T12:00:00Z`));
 }
+function reviewDayLabel(date: string): string {
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" }).format(new Date(`${date}T12:00:00Z`));
+}
 function weekLabel(date: string): string {
   const end = new Date(Date.parse(`${date}T12:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
   const f = (d: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(`${d}T12:00:00Z`));
@@ -230,22 +233,16 @@ export function PlanWeekSheet({
       // sequentially server-side - a week's own suggested Sunday needs to be
       // visible to the next week's Monday, which independent parallel
       // requests could never see (see getMumMonthPlan's comment for why).
-      const { plans: results } = await apiFetch<{ plans: PlanResponse[] }>(
-        `/api/insights/plan-mum-week?ownerId=${owner.id}&weekStarts=${weekStarts.join(",")}`,
-      );
-      setPlans(results);
-      const [types, calendar] = await Promise.all([
+      const [{ plans: results }, types] = await Promise.all([
+        apiFetch<{ plans: PlanResponse[] }>(
+          `/api/insights/plan-mum-week?ownerId=${owner.id}&weekStarts=${weekStarts.join(",")}`,
+        ),
         apiFetch<{ types: ShiftType[] }>(`/api/shift-types?ownerId=${owner.id}`),
-        apiFetch<{ days: CalendarDayView[] }>(`/api/calendar?from=${weekStarts[0]}&to=${new Date(Date.parse(`${weekStarts[weekStarts.length - 1]}T12:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10)}`),
       ]);
+      setPlans(results);
       setShiftTypes(types.types);
-      setPreviewDays(calendar.days);
-      const first = results.find((p) => p.best)?.best ?? results.find((p) => p.bestWithConflicts)?.bestWithConflicts;
-      const firstResponse = results.find((p) => p.best || p.bestWithConflicts);
-      if (first && firstResponse) {
-        setReview({ plan: structuredClone(first), weekStart: firstResponse.weekStart, allowConflicts: !firstResponse.best });
-        setPreviewConflicts(first.conflicts);
-      }
+      setPreviewDays([]);
+      setReview(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't build a plan");
     } finally {
@@ -287,6 +284,25 @@ export function PlanWeekSheet({
     }
   }
 
+  async function openReview(next: ReviewDraft) {
+    setReview(next);
+    setPreviewConflicts(next.plan.conflicts);
+    const end = new Date(Date.parse(`${next.weekStart}T12:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
+    const alreadyLoaded = previewDays.some((day) => day.date === next.weekStart)
+      && previewDays.some((day) => day.date === end);
+    if (alreadyLoaded) return;
+    try {
+      const calendar = await apiFetch<{ days: CalendarDayView[] }>(`/api/calendar?from=${next.weekStart}&to=${end}`);
+      setPreviewDays((current) => {
+        const byDate = new Map(current.map((day) => [day.date, day]));
+        for (const day of calendar.days) byDate.set(day.date, day);
+        return [...byDate.values()];
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't load that week's school details");
+    }
+  }
+
   function editReviewDay(date: string, shiftTypeId: string) {
     if (!review) return;
     const option = shiftTypeId ? shiftTypes.find((t) => t.id === shiftTypeId) ?? null : null;
@@ -312,6 +328,7 @@ export function PlanWeekSheet({
         // exactly as it was for every other week and doesn't flash back to
         // a loading state (the actual bug being fixed here).
         setAppliedWeeks((prev) => new Set(prev).add(weekStart));
+        setReview(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't apply the plan");
@@ -388,7 +405,6 @@ export function PlanWeekSheet({
           </button>
         )}
 
-        <div className="planner-workspace">
         <div className="planner-suggestions">
         {!loading && plans.map((data, wi) => (
             <div key={data.weekStart} style={{ marginBottom: isMonth ? 18 : 0 }}>
@@ -400,7 +416,7 @@ export function PlanWeekSheet({
                   label={data.best ? "Hits the hours, but leaves a gap" : "Closest option — not safe as it stands"}
                   otherParentName={data.otherParentName}
                   onApply={() => applyOne(data.bestWithConflicts!, data.weekStart, true)}
-                  onReview={() => void refreshPreview({ plan: structuredClone(data.bestWithConflicts!), weekStart: data.weekStart, allowConflicts: true })}
+                  onReview={() => void openReview({ plan: structuredClone(data.bestWithConflicts!), weekStart: data.weekStart, allowConflicts: true })}
                   busy={busy}
                   applied={appliedWeeks.has(data.weekStart)}
                   unsafe
@@ -413,7 +429,7 @@ export function PlanWeekSheet({
                     label={isMonth ? "Best fit" : "Best fit"}
                     otherParentName={data.otherParentName}
                     onApply={() => applyOne(data.best!, data.weekStart)}
-                    onReview={() => void refreshPreview({ plan: structuredClone(data.best!), weekStart: data.weekStart, allowConflicts: false })}
+                    onReview={() => void openReview({ plan: structuredClone(data.best!), weekStart: data.weekStart, allowConflicts: false })}
                     busy={busy}
                     applied={appliedWeeks.has(data.weekStart)}
                   />
@@ -430,7 +446,7 @@ export function PlanWeekSheet({
                         label={`Alternative ${i + 1}`}
                         otherParentName={data.otherParentName}
                         onApply={() => applyOne(alt, data.weekStart)}
-                        onReview={() => void refreshPreview({ plan: structuredClone(alt), weekStart: data.weekStart, allowConflicts: false })}
+                        onReview={() => void openReview({ plan: structuredClone(alt), weekStart: data.weekStart, allowConflicts: false })}
                         busy={busy}
                         applied={appliedWeeks.has(data.weekStart)}
                       />
@@ -445,19 +461,25 @@ export function PlanWeekSheet({
             </div>
           ))}
         </div>
-        <aside className="planner-review" aria-live="polite">
-          <div className="plan-card" style={{ position: "sticky", top: 12 }}>
-            <div className="plan-card-title">Your checked plan</div>
-            {!review ? <p className="planner-muted">Choose “Review & edit” on a suggestion. Nothing has been changed yet.</p> : (
-              <>
-                <p className="planner-muted">Week of {weekLabel(review.weekStart)}. Change an unlocked day; this panel checks it before you apply.</p>
+        {review && (
+          <div className="review-modal-backdrop" onClick={() => setReview(null)}>
+            <section className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-modal-title" onClick={(event) => event.stopPropagation()}>
+              <div className="review-modal-header">
+                <div>
+                  <span>Optimiser suggestion</span>
+                  <strong id="review-modal-title">Review &amp; edit · {weekLabel(review.weekStart)}</strong>
+                  <p>Only this week is being edited. Check each day, then apply when it looks right.</p>
+                </div>
+                <button className="icon-button" onClick={() => setReview(null)} aria-label="Close review"><X size={19} /></button>
+              </div>
+              <div className="review-modal-body" aria-live="polite">
                 <div className="review-days">
                   {review.plan.days.map((day) => {
                     const calendar = previewDays.find((d) => d.date === day.date);
                     const children = calendar?.members.filter((m) => m.memberKind === "CHILD") ?? [];
                     const schoolNote = children.length === 0 ? "" : children.every((child) => child.label.startsWith("School")) ? "School day" : children.map((child) => child.label.replace(/^Home ·?\s*/, "")).filter(Boolean).join(" · ");
                     return <div className="review-day" key={day.date}>
-                      <div><strong>{shortDay(day.date)}</strong><span>{schoolNote || "No school info"}</span></div>
+                      <div><strong>{reviewDayLabel(day.date)}</strong><span>{schoolNote || "Loading school details…"}</span></div>
                       {day.locked ? <span className="review-locked">{day.lockedLabel ?? "Off"} <Lock size={11} /></span> : (
                         <select value={day.option?.id ?? ""} onChange={(e) => editReviewDay(day.date, e.target.value)}>
                           <option value="">Off</option>
@@ -469,14 +491,16 @@ export function PlanWeekSheet({
                 </div>
                 <Metrics m={{ ...review.plan.metrics, childcareConflicts: previewConflicts.length }} />
                 {previewConflicts.length > 0 ? <ul className="plan-conflicts">{previewConflicts.map((conflict, index) => <li key={index}>{conflict.explanation}</li>)}</ul> : <div className="pill pill-good">Checked: no childcare gaps in this edited plan</div>}
-                <button className="btn btn-primary btn-block" style={{ marginTop: 12 }} disabled={busy} onClick={() => applyOne(review.plan, review.weekStart, review.allowConflicts || previewConflicts.length > 0)}>
-                  {busy ? "Applying…" : previewConflicts.length > 0 ? "Apply anyway, with the gaps above" : "Apply reviewed plan"}
+              </div>
+              <div className="review-modal-footer">
+                <button className="btn btn-ghost" onClick={() => setReview(null)}>Back to suggestions</button>
+                <button className="btn btn-primary" disabled={busy} onClick={() => applyOne(review.plan, review.weekStart, review.allowConflicts || previewConflicts.length > 0)}>
+                  {busy ? "Applying…" : previewConflicts.length > 0 ? "Apply anyway, with the gaps above" : "Apply this reviewed week"}
                 </button>
-              </>
-            )}
+              </div>
+            </section>
           </div>
-        </aside>
-        </div>
+        )}
       </div>
     </div>
   );

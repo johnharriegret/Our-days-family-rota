@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Brush, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Sparkles, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
@@ -114,6 +114,10 @@ export default function MonthPage() {
   const [monthStart, setMonthStart] = useState(() => firstOfMonth(todayStr()));
   const [days, setDays] = useState<CalendarDayView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [switchingMonth, setSwitchingMonth] = useState(false);
+  const monthCache = useRef(new Map<string, CalendarDayView[]>());
+  const cacheGeneration = useRef(0);
+  const activeRequest = useRef(0);
   // null = closed; otherwise which scope of plan is open.
   const [planScope, setPlanScope] = useState<"month" | "year" | null>(null);
   // Stable across re-renders (e.g. the calendar refreshing after a plan is
@@ -143,8 +147,12 @@ export default function MonthPage() {
   }, []);
 
   function startQuickFill() {
+    const jeanicar = parents.find((parent) => /jean/i.test(parent.name) || parent.icon === "mum");
     setQuickFillOn(true);
-    setSelectedOwnerId(null);
+    // Jeanicar is the person who normally enters variable NHS shifts. Starting
+    // with her selected removes a needless choice while still allowing either
+    // parent to be chosen below.
+    setSelectedOwnerId(jeanicar?.id ?? parents[0]?.id ?? null);
     setSelectedAction(null);
     setPending(new Map());
     setQuickFillError(null);
@@ -185,9 +193,9 @@ export default function MonthPage() {
     setSaving(true);
     setQuickFillError(null);
     try {
-      for (const [date, mark] of pending) {
+      await Promise.all([...pending].map(async ([date, mark]) => {
         const member = parents.find((p) => p.id === mark.ownerId);
-        if (!member) continue;
+        if (!member) return;
         const cfg = resolveQuickShiftConfig(member);
         let payload: Record<string, unknown> = { ownerId: mark.ownerId, date, shiftTypeId: null };
         if (mark.action === "DAY") {
@@ -200,7 +208,7 @@ export default function MonthPage() {
           payload = { ...payload, customStart: null, customEnd: null };
         }
         await apiFetch("/api/shifts", { method: "POST", body: JSON.stringify(payload) });
-      }
+      }));
       cancelQuickFill();
       emitCalendarChanged();
     } catch (err) {
@@ -241,24 +249,69 @@ export default function MonthPage() {
   }
   // -------------------------------------------------------------------------
 
-  const load = useCallback(async () => {
-    const last = daysInMonth(monthStart);
-    const to = addDays(monthStart, last - 1);
-    const data = await apiFetch<{ days: CalendarDayView[] }>(`/api/calendar?from=${monthStart}&to=${to}`);
-    setDays(data.days);
+  const fetchMonth = useCallback(async (month: string) => {
+    const to = addDays(month, daysInMonth(month) - 1);
+    return apiFetch<{ days: CalendarDayView[] }>(`/api/calendar?from=${month}&to=${to}`).then((data) => data.days);
+  }, []);
+
+  const showDays = useCallback((nextDays: CalendarDayView[]) => {
+    setDays(nextDays);
     setEditingDay((current) =>
-      data.days.find((day) => day.date === current?.date)
-      ?? data.days.find((day) => day.date === todayStr())
-      ?? data.days[0]
+      nextDays.find((day) => day.date === current?.date)
+      ?? nextDays.find((day) => day.date === todayStr())
+      ?? nextDays[0]
       ?? null,
     );
-    setLoading(false);
-  }, [monthStart]);
+  }, []);
+
+  const load = useCallback(async (force = false) => {
+    const cached = !force ? monthCache.current.get(monthStart) : undefined;
+    if (cached) {
+      showDays(cached);
+      setLoading(false);
+      setSwitchingMonth(false);
+      return;
+    }
+
+    const requestId = ++activeRequest.current;
+    setSwitchingMonth(true);
+    try {
+      const nextDays = await fetchMonth(monthStart);
+      // Month arrows can be tapped quickly. Never let a slower, older request
+      // replace a newer month that is already on screen.
+      if (requestId !== activeRequest.current) return;
+      monthCache.current.set(monthStart, nextDays);
+      showDays(nextDays);
+      setLoading(false);
+
+      // Most people move one month at a time. Warm both neighbours quietly so
+      // the next arrow press is normally an instant in-memory switch.
+      for (const neighbour of [addMonths(monthStart, -1), addMonths(monthStart, 1)]) {
+        if (!monthCache.current.has(neighbour)) {
+          const generation = cacheGeneration.current;
+          void fetchMonth(neighbour)
+            .then((neighbourDays) => {
+              if (generation === cacheGeneration.current) monthCache.current.set(neighbour, neighbourDays);
+            })
+            .catch(() => undefined);
+        }
+      }
+    } finally {
+      if (requestId === activeRequest.current) setSwitchingMonth(false);
+    }
+  }, [fetchMonth, monthStart, showDays]);
 
   useEffect(() => {
     load();
   }, [load]);
-  useCalendarChangedListener(load);
+  const refreshCalendar = useCallback(() => {
+    // A saved/deleted shift can affect overnight cover on a neighbouring day,
+    // so discard every warmed month rather than risk showing a stale edge day.
+    cacheGeneration.current += 1;
+    monthCache.current.clear();
+    void load(true);
+  }, [load]);
+  useCalendarChangedListener(refreshCalendar);
 
   const leadingBlanks = weekdayIndexMondayFirst(monthStart);
   const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(
@@ -274,6 +327,14 @@ export default function MonthPage() {
     setEditingDay(days.find((day) => day.date === today) ?? null);
   }
 
+  function changeMonth(offset: number) {
+    const next = addMonths(monthStart, offset);
+    const cached = monthCache.current.get(next);
+    if (cached) showDays(cached);
+    else setSwitchingMonth(true);
+    setMonthStart(next);
+  }
+
   return (
     <div className="page-body month-page">
       <section className="month-hero">
@@ -283,20 +344,27 @@ export default function MonthPage() {
           <p>{conflictCount > 0 ? `${conflictCount} day${conflictCount === 1 ? "" : "s"} need a childcare check` : "Childcare cover looks clear"} · {togetherCount} days off together</p>
         </div>
         <div className="month-switcher" aria-label="Choose month">
-          <button onClick={() => setMonthStart((m) => addMonths(m, -1))} aria-label="Previous month"><ChevronLeft size={20} /></button>
+          <button onClick={() => changeMonth(-1)} aria-label="Previous month"><ChevronLeft size={20} /></button>
           <button className="today-jump" onClick={goToToday}>Today</button>
-          <button onClick={() => setMonthStart((m) => addMonths(m, 1))} aria-label="Next month"><ChevronRight size={20} /></button>
+          <button onClick={() => changeMonth(1)} aria-label="Next month"><ChevronRight size={20} /></button>
         </div>
       </section>
 
       <div className="calendar-actions">
         <button className="calendar-action primary" onClick={() => setPlanScope("month")}><Sparkles size={17} /><span><strong>Plan month</strong><small>Suggest Jeanicar&apos;s shifts</small></span></button>
-        <button className="calendar-action" onClick={quickFillOn ? cancelQuickFill : startQuickFill}><Brush size={17} /><span><strong>{quickFillOn ? "Close quick fill" : "Quick fill"}</strong><small>Paint shifts onto dates</small></span></button>
+        <button className="calendar-action" onClick={quickFillOn ? cancelQuickFill : startQuickFill}><Brush size={17} /><span><strong>{quickFillOn ? "Close shift entry" : "Add shifts"}</strong><small>Jeanicar&apos;s month in a few taps</small></span></button>
         <button className="calendar-action compact" onClick={() => setPlanScope("year")}><Sparkles size={16} /><span><strong>Plan year</strong></span></button>
         {parents.some((parent) => /jean/i.test(parent.name) || parent.icon === "mum") && (
           <button className="calendar-action compact danger" disabled={clearingMonth} onClick={clearWifeMonth}><Trash2 size={16} /><span><strong>{clearingMonth ? "Clearing…" : "Clear month"}</strong></span></button>
         )}
       </div>
+
+      {parents.some((parent) => (/jean/i.test(parent.name) || parent.icon === "mum") && !parent.login) && (
+        <div className="wife-access-banner">
+          <span><strong>Make it easy for Jeanicar</strong> — she does not have her own sign-in yet.</span>
+          <a href="/settings">Set up her login</a>
+        </div>
+      )}
 
       {planScope && (
         <PlanWeekSheet
@@ -325,7 +393,8 @@ export default function MonthPage() {
 
       {loading && <div className="empty-state">Building your month…</div>}
 
-      <div className="calendar-workspace">
+      <div className={`calendar-workspace${switchingMonth ? " is-switching" : ""}`} aria-busy={switchingMonth}>
+      {switchingMonth && <div className="month-loading-badge">Loading {monthLabel}…</div>}
       <section className="calendar-card">
         <div className="calendar-card-head">
           <div><strong>At a glance</strong><span>Solid = school · ring = home</span></div>
