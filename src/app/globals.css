@@ -317,20 +317,33 @@ a { color: inherit; text-decoration: none; }
 }
 .tab-bar a.active { color: var(--accent); background: var(--accent-soft); }
 
-.fab {
-  position: fixed;
-  right: max(20px, calc((100vw - 1080px) / 2));
-  bottom: 86px;
-  width: 60px;
-  height: 60px;
-  border-radius: 20px;
-  background: var(--accent);
-  color: #fff;
+/* The add/plus action, moved into the tab bar itself (beside Settings) so it
+   scrolls and stays pinned as one piece with Calendar/Settings instead of
+   being a second, separately-positioned fixed element that could drift out
+   of sync with the tab bar on mobile browsers with a dynamic toolbar. */
+.tab-bar-add {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-family: inherit;
+}
+.tab-bar-add-icon {
   display: grid;
   place-items: center;
-  box-shadow: 0 10px 24px rgba(106, 99, 209, 0.4);
-  border: none;
-  z-index: 20;
+  width: 32px;
+  height: 32px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(106, 99, 209, .38);
 }
 
 .sheet-backdrop {
@@ -696,6 +709,20 @@ a { color: inherit; text-decoration: none; }
 .marker-toggle-row > b { min-width: 58px; padding: 5px 8px; border-radius: 999px; background: var(--bg); color: var(--muted); font-size: 10.5px; }
 .marker-toggle-row > b.is-on { background: var(--child1-soft); color: var(--good); }
 .month-cell-daynum { line-height: 1; }
+.month-cell-daynum-row { display: flex; align-items: center; gap: 3px; }
+/* A small badge beside the date so an upcoming appointment is visible at a
+   glance on the month grid, without having to tap into the day. */
+.appointment-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
 /* Shift pills: coloured, initialled blocks - deliberately big enough to read
    at a glance without tapping/holding, per real user feedback that the old
    5px dots were too small to make out who was working. */
@@ -910,8 +937,7 @@ a { color: inherit; text-decoration: none; }
   .review-modal-footer { padding-left: 12px; padding-right: 12px; }
   .review-modal-footer .btn:first-child { padding-left: 8px; padding-right: 8px; }
   .review-modal-footer .btn:last-child { flex: 1; }
-  .fab { width: 54px; height: 54px; right: 16px; bottom: 82px; border-radius: 18px; }
-  .tab-bar { width: calc(100% - 92px); left: 8px; right: auto; border-radius: 18px 18px 0 0; }
+  .tab-bar-add-icon { width: 30px; height: 30px; border-radius: 10px; }
 }
 
 @media (max-width: 380px) {

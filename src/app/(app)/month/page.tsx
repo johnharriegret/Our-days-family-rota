@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Brush, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Sparkles, Trash2, X } from "lucide-react";
+import { Brush, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Sparkles, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
@@ -497,8 +497,10 @@ export default function MonthPage() {
             const isToday = day.date === todayStr();
             const isOutsideMonth = day.date.slice(0, 7) !== monthKey;
             const hasConflict = day.childcare?.status === "CHILDCARE_NEEDED";
+            const appointments = day.events.filter((e) => e.category === "APPOINTMENT");
             const titleLines = day.members.map((m) => `${m.name}: ${m.label}`);
             if (hasConflict && day.childcare) titleLines.push(`⚠ ${day.childcare.explanation}`);
+            appointments.forEach((a) => titleLines.push(`📌 ${a.title}`));
             const mark = pending.get(day.date);
             const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction)
               && (selectedAction !== "APPOINTMENT" || Boolean(appointmentNote.trim()));
@@ -521,7 +523,14 @@ export default function MonthPage() {
                 aria-pressed={editingDay?.date === day.date}
                 onClick={canPaint ? () => tapDate(day.date) : () => setEditingDay(day)}
               >
-                <span className="month-cell-daynum">{dayNum}</span>
+                <div className="month-cell-daynum-row">
+                  <span className="month-cell-daynum">{dayNum}</span>
+                  {appointments.length > 0 && (
+                    <span className="appointment-badge" title={appointments.map((a) => a.title).join(", ")}>
+                      <CalendarClock size={10} />
+                    </span>
+                  )}
+                </div>
                 <div className="parent-lanes">
                   {[0, 1].map((slot) => {
                     const parent = parentRows.find((member) => parentSlot(member.name) === slot);

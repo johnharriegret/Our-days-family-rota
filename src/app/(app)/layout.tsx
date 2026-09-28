@@ -50,10 +50,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {children}
 
-      <button className="fab" onClick={() => setShowAdd(true)} aria-label="Add to the calendar">
-        <Plus size={28} />
-      </button>
-
       {showAdd && (
         <AddSheet
           defaultDate={todayStr()}
@@ -73,6 +69,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </a>
           );
         })}
+        <button type="button" className="tab-bar-add" onClick={() => setShowAdd(true)} aria-label="Add to the calendar">
+          <span className="tab-bar-add-icon"><Plus size={19} /></span>
+          Add
+        </button>
       </nav>
     </div>
   );
