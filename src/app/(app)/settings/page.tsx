@@ -19,6 +19,7 @@ type Bootstrap = {
   patternsByOwnerId: Record<string, Pattern>;
   shiftTypesByOwnerId: Record<string, ShiftType[]>;
   togetherColor: string;
+  hiddenCalendarChildIds: string[];
 };
 
 // Everything Settings needs, in one request - see the route's own comment for
@@ -42,6 +43,7 @@ export default function SettingsPage() {
   if (loading || !data) return <div className="page-body empty-state">Loading…</div>;
 
   const parents = data.members.filter((m) => m.kind === "PARENT");
+  const children = data.members.filter((m) => m.kind === "CHILD");
 
   return (
     <div className="page-body">
@@ -50,7 +52,12 @@ export default function SettingsPage() {
       <ShiftTypesSection parents={parents} initialShiftTypesByOwnerId={data.shiftTypesByOwnerId} />
       <SchoolsSection initialSchools={data.schools} onChanged={load} />
       <ChildcareRuleSection initialRule={data.childcareRule} onChanged={load} />
-      <AppearanceSection initialTogetherColor={data.togetherColor} onChanged={load} />
+      <AppearanceSection
+        initialTogetherColor={data.togetherColor}
+        childMembers={children}
+        initialHiddenCalendarChildIds={data.hiddenCalendarChildIds}
+        onChanged={load}
+      />
     </div>
   );
 }

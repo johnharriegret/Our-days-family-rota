@@ -131,6 +131,7 @@ export default function MonthPage() {
   // --- Quick fill (paint) tool -------------------------------------------
   const [quickFillOn, setQuickFillOn] = useState(false);
   const [parents, setParents] = useState<FamilyMember[]>([]);
+  const [hiddenCalendarChildIds, setHiddenCalendarChildIds] = useState<string[]>([]);
   const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const [selectedAction, setSelectedAction] = useState<QuickFillAction | null>(null);
   const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction }>>(new Map());
@@ -141,9 +142,13 @@ export default function MonthPage() {
   const [clearingMonth, setClearingMonth] = useState(false);
 
   useEffect(() => {
-    apiFetch<{ members: FamilyMember[] }>("/api/family-members").then((d) =>
-      setParents(d.members.filter((m) => m.kind === "PARENT")),
-    );
+    Promise.all([
+      apiFetch<{ members: FamilyMember[] }>("/api/family-members"),
+      apiFetch<{ hiddenCalendarChildIds: string[] }>("/api/settings/appearance"),
+    ]).then(([family, appearance]) => {
+      setParents(family.members.filter((member) => member.kind === "PARENT"));
+      setHiddenCalendarChildIds(appearance.hiddenCalendarChildIds ?? []);
+    });
   }, []);
 
   function startQuickFill() {
@@ -317,7 +322,9 @@ export default function MonthPage() {
   const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(
     new Date(`${monthStart}T12:00:00Z`),
   );
-  const monthChildren = days[0]?.members.filter((member) => member.memberKind === "CHILD") ?? [];
+  const monthChildren = days[0]?.members.filter((member) =>
+    member.memberKind === "CHILD" && !hiddenCalendarChildIds.includes(member.memberId),
+  ) ?? [];
   const conflictCount = days.filter((day) => day.childcare?.status === "CHILDCARE_NEEDED").length;
   const togetherCount = days.filter((day) => day.bothParentsOff).length;
 
@@ -398,8 +405,25 @@ export default function MonthPage() {
       <section className="calendar-card">
         <div className="calendar-card-head">
           <div><strong>At a glance</strong><span>Solid = school · ring = home</span></div>
-          <div className="calendar-legend">
-            {monthChildren.map((child) => <span key={child.memberId}><i className="legend-dot" style={childMarkerStyle(child.name, child.colorToken)} />{child.name.split(" ")[0]}</span>)}
+          <div className="calendar-legend-groups">
+            <div className="calendar-legend-group">
+              <em>Shifts</em>
+              <div className="calendar-legend parent-colors">
+                {[...parents].sort((a, b) => parentSlot(a.name) - parentSlot(b.name)).flatMap((parent) => {
+                  const config = resolveQuickShiftConfig(parent);
+                  return [
+                    <span key={`${parent.id}-day`}><i className="legend-shift" style={{ background: config.dayColor }} />{initials(parent.name)} Day</span>,
+                    <span key={`${parent.id}-night`}><i className="legend-shift" style={{ background: config.nightColor }} />{initials(parent.name)} Night</span>,
+                  ];
+                })}
+              </div>
+            </div>
+            <div className="calendar-legend-group">
+              <em>School</em>
+              <div className="calendar-legend">
+                {monthChildren.map((child) => <span key={child.memberId}><i className="legend-dot" style={childMarkerStyle(child.name, child.colorToken)} />{child.name.split(" ")[0]}</span>)}
+              </div>
+            </div>
           </div>
         </div>
         <div className="month-grid" style={{ marginBottom: 6 }}>
@@ -423,10 +447,11 @@ export default function MonthPage() {
             const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction);
             const parentRows = day.members.filter((member) => member.memberKind === "PARENT").sort((a, b) => parentSlot(a.name) - parentSlot(b.name));
             const children = day.members.filter((member) => member.memberKind === "CHILD");
+            const visibleChildren = children.filter((child) => !hiddenCalendarChildIds.includes(child.memberId));
             const holidaySlots = new Set(parentRows.filter((parent) => parent.label === "Annual leave").map((parent) => parentSlot(parent.name)));
             const holidayClass = holidaySlots.size === 2 ? " holiday-both" : holidaySlots.has(0) ? " holiday-hg" : holidaySlots.has(1) ? " holiday-jg" : "";
             const hasBankHoliday = children.some((child) => /bank holiday/i.test(child.label));
-            const insetChildren = children.filter((child) => /inset/i.test(child.label));
+            const insetChildren = visibleChildren.filter((child) => /inset/i.test(child.label));
             return (
               <button
                 type="button"
@@ -449,7 +474,7 @@ export default function MonthPage() {
                   })}
                 </div>
                 <div className="child-marker-row" aria-label="School status">
-                  {children.map((child) => <span key={child.memberId} className={`child-school-dot${child.label.startsWith("School") ? " at-school" : " home"}`} style={childMarkerStyle(child.name, child.colorToken)} title={`${child.name}: ${child.label}`} />)}
+                  {visibleChildren.map((child) => <span key={child.memberId} className={`child-school-dot${child.label.startsWith("School") ? " at-school" : " home"}`} style={childMarkerStyle(child.name, child.colorToken)} title={`${child.name}: ${child.label}`} />)}
                 </div>
                 <div className="exception-marker-row" aria-label="School exceptions">
                   {hasBankHoliday && <span className="exception-marker bank" title="Bank holiday">BH</span>}
@@ -472,7 +497,7 @@ export default function MonthPage() {
             );
           })}
         </div>
-        <div className="calendar-footnote"><span><i className="conflict-key" /> Childcare check</span><span><i className="holiday-key" /> Annual leave</span><span>Tap a date for the full day</span></div>
+        <div className="calendar-footnote"><span><i className="conflict-key" /> Childcare check</span><span><i className="holiday-key hg" /> HG leave</span><span><i className="holiday-key jg" /> JG leave</span><span><i className="holiday-key both" /> Both on leave</span><span>Tap a date for the full day</span></div>
       </section>
 
       {editingDay && (

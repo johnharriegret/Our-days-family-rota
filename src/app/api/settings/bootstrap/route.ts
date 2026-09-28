@@ -4,7 +4,7 @@ import { requireSession } from "@/lib/session";
 import { withApi } from "@/lib/api";
 import { DEFAULT_TOGETHER_COLOR } from "@/lib/constants";
 
-type AppearanceData = { togetherColor?: string };
+type AppearanceData = { togetherColor?: string; hiddenCalendarChildIds?: string[] };
 
 /**
  * Everything the Settings page needs for its first render, in one request.
@@ -38,7 +38,11 @@ export async function GET() {
       }),
       prisma.familySettings.findUnique({ where: { householdId } }),
     ]);
-    const togetherColor = ((appearance?.data ?? {}) as AppearanceData).togetherColor ?? DEFAULT_TOGETHER_COLOR;
+    const appearanceData = (appearance?.data ?? {}) as AppearanceData;
+    const togetherColor = appearanceData.togetherColor ?? DEFAULT_TOGETHER_COLOR;
+    const hiddenCalendarChildIds = Array.isArray(appearanceData.hiddenCalendarChildIds)
+      ? appearanceData.hiddenCalendarChildIds
+      : [];
 
     const parentIds = members.filter((m) => m.kind === "PARENT").map((m) => m.id);
 
@@ -70,6 +74,6 @@ export async function GET() {
       login: user ? { id: user.id, email: user.email } : null,
     }));
 
-    return NextResponse.json({ members: membersOut, schools, childcareRule, patternsByOwnerId, shiftTypesByOwnerId, togetherColor });
+    return NextResponse.json({ members: membersOut, schools, childcareRule, patternsByOwnerId, shiftTypesByOwnerId, togetherColor, hiddenCalendarChildIds });
   });
 }

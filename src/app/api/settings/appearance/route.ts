@@ -4,14 +4,20 @@ import { requireRole, requireSession } from "@/lib/session";
 import { apiError, withApi } from "@/lib/api";
 import { DEFAULT_TOGETHER_COLOR } from "@/lib/constants";
 
-type AppearanceData = { togetherColor?: string };
+type AppearanceData = {
+  togetherColor?: string;
+  hiddenCalendarChildIds?: string[];
+};
 
 export async function GET() {
   return withApi(async () => {
     const session = await requireSession();
     const settings = await prisma.familySettings.findUnique({ where: { householdId: session.householdId } });
     const data = (settings?.data ?? {}) as AppearanceData;
-    return NextResponse.json({ togetherColor: data.togetherColor ?? DEFAULT_TOGETHER_COLOR });
+    return NextResponse.json({
+      togetherColor: data.togetherColor ?? DEFAULT_TOGETHER_COLOR,
+      hiddenCalendarChildIds: Array.isArray(data.hiddenCalendarChildIds) ? data.hiddenCalendarChildIds : [],
+    });
   });
 }
 
@@ -21,19 +27,41 @@ export async function GET() {
 export async function PATCH(request: Request) {
   return withApi(async () => {
     const session = await requireRole("ADMIN", "PARENT");
-    const { togetherColor } = (await request.json()) as { togetherColor?: string };
+    const { togetherColor, hiddenCalendarChildIds } = (await request.json()) as {
+      togetherColor?: string;
+      hiddenCalendarChildIds?: unknown;
+    };
     const HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
-    if (!togetherColor || !HEX_RE.test(togetherColor)) {
+    if (togetherColor !== undefined && !HEX_RE.test(togetherColor)) {
       return apiError("togetherColor must be a hex colour", 422);
+    }
+    if (hiddenCalendarChildIds !== undefined && (
+      !Array.isArray(hiddenCalendarChildIds)
+      || hiddenCalendarChildIds.some((id) => typeof id !== "string")
+    )) {
+      return apiError("hiddenCalendarChildIds must be a list of member IDs", 422);
+    }
+    if (togetherColor === undefined && hiddenCalendarChildIds === undefined) {
+      return apiError("No appearance setting was supplied", 422);
     }
 
     const existing = await prisma.familySettings.findUnique({ where: { householdId: session.householdId } });
-    const data = { ...((existing?.data ?? {}) as AppearanceData), togetherColor };
+    const current = (existing?.data ?? {}) as AppearanceData;
+    const data: AppearanceData = {
+      ...current,
+      ...(togetherColor !== undefined ? { togetherColor } : {}),
+      ...(hiddenCalendarChildIds !== undefined
+        ? { hiddenCalendarChildIds: [...new Set(hiddenCalendarChildIds as string[])] }
+        : {}),
+    };
     await prisma.familySettings.upsert({
       where: { householdId: session.householdId },
       create: { householdId: session.householdId, data },
       update: { data },
     });
-    return NextResponse.json({ togetherColor });
+    return NextResponse.json({
+      togetherColor: data.togetherColor ?? DEFAULT_TOGETHER_COLOR,
+      hiddenCalendarChildIds: data.hiddenCalendarChildIds ?? [],
+    });
   });
 }

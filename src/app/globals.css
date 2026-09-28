@@ -555,17 +555,24 @@ a { color: inherit; text-decoration: none; }
 .month-loading-badge { position: absolute; z-index: 5; top: 12px; left: 50%; transform: translateX(-50%); padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.94); color: var(--accent); box-shadow: 0 7px 20px rgba(36,50,87,.12); font-size: 10.5px; font-weight: 800; white-space: nowrap; }
 .calendar-card, .day-inspector { background: var(--card); border: 1px solid rgba(231,234,243,.8); border-radius: 24px; box-shadow: 0 12px 34px rgba(36,50,87,.065); }
 .calendar-card { min-width: 0; padding: 18px; }
-.calendar-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+.calendar-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
 .calendar-card-head > div:first-child { display: grid; gap: 2px; }
 .calendar-card-head strong { font-size: 14px; }
 .calendar-card-head > div:first-child span { color: var(--muted); font-size: 11px; }
+.calendar-legend-groups { display: grid; gap: 5px; justify-items: end; }
+.calendar-legend-group { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.calendar-legend-group > em { color: var(--muted); font-size: 8.5px; font-style: normal; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .calendar-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; }
 .calendar-legend span { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10.5px; font-weight: 700; }
 .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--marker-color); }
+.legend-shift { display: inline-block; width: 14px; height: 8px; border-radius: 3px; }
 .calendar-footnote { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px; color: var(--muted); font-size: 10.5px; font-weight: 600; }
 .calendar-footnote span { display: inline-flex; align-items: center; gap: 5px; }
 .conflict-key { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 3px var(--family-soft); }
-.holiday-key { width: 13px; height: 9px; border: 2px solid transparent; border-radius: 3px; background: linear-gradient(#fff,#fff) padding-box, linear-gradient(135deg,#4c1d95,#e11d48,#60a5fa) border-box; }
+.holiday-key { width: 13px; height: 9px; border: 2px solid transparent; border-radius: 3px; background: linear-gradient(#fff,#fff) padding-box; }
+.holiday-key.hg { border-color: #2563eb; }
+.holiday-key.jg { border-color: #ec4899; }
+.holiday-key.both { background: linear-gradient(#fff,#fff) padding-box, linear-gradient(135deg,#2563eb 0 49%,#ec4899 51% 100%) border-box; }
 
 .day-inspector { position: sticky; top: 12px; overflow: hidden; }
 .day-inspector-head { padding: 22px; color: #fff; background: linear-gradient(145deg, #25214e, #6256bd); }
@@ -637,14 +644,25 @@ a { color: inherit; text-decoration: none; }
 .month-cell.today { border-color: color-mix(in srgb, var(--accent) 55%, white); }
 .month-cell.today .month-cell-daynum { color: var(--accent); }
 .month-cell.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-/* Harrie's leave is the richer, darker spectrum. Jeanicar's is deliberately
-   lighter, so either can be found in one fast scan of the month. */
+/* Annual leave reads like the people themselves: Harrie blue, Jeanicar pink,
+   and a clean half-and-half border when they are both away. */
 .month-cell.holiday-hg,
 .month-cell.holiday-jg,
 .month-cell.holiday-both { border: 3px solid transparent; }
-.month-cell.holiday-hg { background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(135deg, #4c1d95, #a21caf, #e11d48, #ea580c) border-box; }
-.month-cell.holiday-jg { background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(135deg, #06b6d4, #60a5fa, #a78bfa, #f9a8d4) border-box; }
-.month-cell.holiday-both { background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(135deg, #4c1d95 0 28%, #e11d48 48%, #60a5fa 65%, #f9a8d4 100%) border-box; }
+.month-cell.holiday-hg { background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(#2563eb,#2563eb) border-box; }
+.month-cell.holiday-jg { background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(#ec4899,#ec4899) border-box; }
+.month-cell.holiday-both { background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(135deg,#2563eb 0 49.5%,#ec4899 50.5% 100%) border-box; }
+
+.appearance-marker-settings { margin: 18px 0 14px; padding-top: 17px; border-top: 1px solid var(--line); }
+.appearance-marker-settings > div:first-child { display: grid; gap: 3px; margin-bottom: 10px; }
+.appearance-marker-settings > div:first-child strong { font-size: 13.5px; }
+.appearance-marker-settings > div:first-child span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.marker-toggle-list { display: grid; gap: 7px; }
+.marker-toggle-row { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 43px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.marker-toggle-row > span { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
+.marker-toggle-row > span i { width: 10px; height: 10px; border-radius: 50%; }
+.marker-toggle-row > b { min-width: 58px; padding: 5px 8px; border-radius: 999px; background: var(--bg); color: var(--muted); font-size: 10.5px; }
+.marker-toggle-row > b.is-on { background: var(--child1-soft); color: var(--good); }
 .month-cell-daynum { line-height: 1; }
 /* Shift pills: coloured, initialled blocks - deliberately big enough to read
    at a glance without tapping/holding, per real user feedback that the old
@@ -825,8 +843,11 @@ a { color: inherit; text-decoration: none; }
   .calendar-card { padding: 11px 8px 12px; border-radius: 20px; }
   .calendar-card-head { padding: 0 3px; margin-bottom: 12px; align-items: flex-start; }
   .calendar-card-head > div:first-child span { font-size: 9.5px; }
-  .calendar-legend { gap: 4px 7px; max-width: 55%; }
+  .calendar-legend-groups { max-width: 73%; gap: 4px; }
+  .calendar-legend-group { gap: 5px; }
+  .calendar-legend { gap: 4px 7px; }
   .calendar-legend span { font-size: 9px; }
+  .calendar-legend.parent-colors span { font-size: 8.5px; }
   .month-grid { gap: 3px; }
   .month-cell { min-height: 88px; border-radius: 9px; gap: 2px; padding-top: 5px; }
   .month-cell-daynum { font-size: 11px; }
