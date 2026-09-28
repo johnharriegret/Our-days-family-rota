@@ -23,6 +23,13 @@ export function InstallAppButton() {
   const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
+    // Register before Android checks installability. This is intentionally a
+    // network-only worker: it enables a genuine standalone install without
+    // ever caching private rota or household API responses on a shared phone.
+    if ("serviceWorker" in navigator) {
+      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+
     const standalone =
       window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
     setIsStandalone(standalone);
@@ -144,7 +151,7 @@ export function InstallAppButton() {
             )}
 
             <div className="install-guide-note">
-              She may need to sign in once the first time she opens it.
+              {isIos ? "She" : "You"} may need to sign in once when it first opens.
             </div>
             <button className="btn btn-primary btn-block" type="button" onClick={() => setShowGuide(false)}>
               Got it

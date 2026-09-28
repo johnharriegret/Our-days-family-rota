@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="44" y1="32" x2="468" y2="490" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#282253"/>
+      <stop offset="1" stop-color="#7167db"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="184" y1="169" x2="330" y2="343" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff4a8"/>
+      <stop offset="1" stop-color="#ffb347"/>
+    </linearGradient>
+  </defs>
+  <!-- A full-bleed background is required for Android adaptive icon masks. -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- Keep all meaningful artwork inside Android's central safe zone. -->
+  <circle cx="256" cy="252" r="82" fill="url(#sun)"/>
+  <g fill="#fff" opacity=".96">
+    <rect x="245" y="99" width="22" height="49" rx="11"/>
+    <rect x="245" y="356" width="22" height="49" rx="11"/>
+    <rect x="103" y="241" width="49" height="22" rx="11"/>
+    <rect x="360" y="241" width="49" height="22" rx="11"/>
+    <rect x="148" y="139" width="22" height="49" rx="11" transform="rotate(-45 148 139)"/>
+    <rect x="330" y="321" width="22" height="49" rx="11" transform="rotate(-45 330 321)"/>
+    <rect x="364" y="139" width="22" height="49" rx="11" transform="rotate(45 364 139)"/>
+    <rect x="182" y="321" width="22" height="49" rx="11" transform="rotate(45 182 321)"/>
+  </g>
+  <path d="M216 254c13 15 26 22 40 22s27-7 40-22" fill="none" stroke="#5b4598" stroke-width="15" stroke-linecap="round"/>
+  <circle cx="225" cy="225" r="9" fill="#5b4598"/>
+  <circle cx="287" cy="225" r="9" fill="#5b4598"/>
+</svg>
