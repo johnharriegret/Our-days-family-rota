@@ -464,6 +464,29 @@ export default function MonthPage() {
     setMonthStart(next);
   }
 
+  // Swipe the calendar grid to switch months: swipe right for next month,
+  // left for previous. Off while quick add is on, so dragging a finger
+  // across the dates you're painting can't be mistaken for a page swipe.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const SWIPE_THRESHOLD = 55;
+
+  function handleGridTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  }
+
+  function handleGridTouchEnd(e: React.TouchEvent) {
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start || quickFillOn) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      changeMonth(dx > 0 ? 1 : -1);
+    }
+  }
+
   return (
     <div className="page-body month-page">
       <Suspense fallback={null}>
@@ -546,7 +569,7 @@ export default function MonthPage() {
 
       <div className={`calendar-workspace${switchingMonth ? " is-switching" : ""}`} aria-busy={switchingMonth}>
       {switchingMonth && <div className="month-loading-badge">Loading {monthLabel}…</div>}
-      <section className="calendar-card">
+      <section className="calendar-card" onTouchStart={handleGridTouchStart} onTouchEnd={handleGridTouchEnd}>
         <div className="calendar-card-head">
           <div className="calendar-inline-switcher" aria-label="Choose calendar month">
             <button type="button" onClick={() => changeMonth(-1)} aria-label="Previous month"><ChevronLeft size={18} /></button>
