@@ -464,9 +464,11 @@ export default function MonthPage() {
     setMonthStart(next);
   }
 
-  // Swipe the calendar grid to switch months: swipe right for next month,
-  // left for previous. Off while quick add is on, so dragging a finger
-  // across the dates you're painting can't be mistaken for a page swipe.
+  // Swipe the calendar grid to switch months: swipe left (finger moves
+  // right-to-left) for next month, right for previous - the usual paging
+  // gesture, content sliding in from the direction you swiped toward. Off
+  // while quick add is on, so dragging a finger across the dates you're
+  // painting can't be mistaken for a page swipe.
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_THRESHOLD = 55;
 
@@ -483,7 +485,7 @@ export default function MonthPage() {
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
     if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      changeMonth(dx > 0 ? 1 : -1);
+      changeMonth(dx > 0 ? -1 : 1);
     }
   }
 
