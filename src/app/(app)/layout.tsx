@@ -1,21 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CalendarDays, LogOut, Plus, Settings2 } from "lucide-react";
-import { AddSheet } from "@/components/AddSheet";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import { apiFetch } from "@/lib/client";
-import { emitCalendarChanged } from "@/lib/refresh";
-
-function todayStr(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
 
 const TABS = [
   { href: "/month", label: "Calendar", icon: CalendarDays },
@@ -25,7 +13,6 @@ const TABS = [
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [showAdd, setShowAdd] = useState(false);
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" });
@@ -50,14 +37,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {children}
 
-      {showAdd && (
-        <AddSheet
-          defaultDate={todayStr()}
-          onClose={() => setShowAdd(false)}
-          onSaved={() => emitCalendarChanged()}
-        />
-      )}
-
       <nav className="tab-bar">
         {TABS.map((t) => {
           const Icon = t.icon;
@@ -69,7 +48,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </a>
           );
         })}
-        <button type="button" className="tab-bar-add" onClick={() => setShowAdd(true)} aria-label="Add to the calendar">
+        {/* The same quick add tool as Month's "Quick add" action - this just
+            jumps there (via ?quickAdd=1, which the Month page opens then
+            clears) so it works as a shortcut from Settings too. */}
+        <button type="button" className="tab-bar-add" onClick={() => router.push("/month?quickAdd=1")} aria-label="Quick add to the calendar">
           <span className="tab-bar-add-icon"><Plus size={19} /></span>
           Add
         </button>

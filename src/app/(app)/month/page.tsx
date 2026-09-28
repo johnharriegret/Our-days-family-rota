@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Brush, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Sparkles, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
@@ -10,7 +11,7 @@ import { resolveQuickShiftConfig } from "@/lib/quickShift";
 import { initials } from "@/lib/initials";
 import type { CalendarDayView, FamilyMember } from "@/lib/clientTypes";
 
-type QuickFillAction = "DAY" | "NIGHT" | "OVERTIME" | "HOLIDAY" | "APPOINTMENT";
+type QuickFillAction = "DAY" | "NIGHT" | "OVERTIME" | "HOLIDAY" | "APPOINTMENT" | "ACTIVITY" | "OTHER";
 
 const ACTION_LABELS: Record<QuickFillAction, string> = {
   DAY: "Days",
@@ -18,7 +19,16 @@ const ACTION_LABELS: Record<QuickFillAction, string> = {
   OVERTIME: "Overtime",
   HOLIDAY: "Holiday",
   APPOINTMENT: "Appointment",
+  ACTIVITY: "Activity",
+  OTHER: "Other",
 };
+
+// Actions that describe a calendar event (saved via /api/events, with a short
+// note of what it is) rather than a work shift - available to anyone, parent
+// or child. The shift-specific actions only make sense for a parent.
+const EVENT_ACTIONS = new Set<QuickFillAction>(["APPOINTMENT", "ACTIVITY", "OTHER"]);
+const PARENT_ACTIONS: QuickFillAction[] = ["DAY", "NIGHT", "OVERTIME", "HOLIDAY", "APPOINTMENT", "ACTIVITY", "OTHER"];
+const CHILD_ACTIONS: QuickFillAction[] = ["APPOINTMENT", "ACTIVITY", "OTHER"];
 
 function toMinutesOfDay(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
@@ -121,6 +131,24 @@ function weekStartsForYear(monthStart: string): string[] {
   return starts;
 }
 
+// The tab bar's "+" button is a shortcut into quick add from any page - it
+// navigates here with ?quickAdd=1, which this opens then clears so a
+// back-navigation or refresh doesn't reopen it. Split out and wrapped in its
+// own Suspense boundary because useSearchParams() would otherwise force the
+// whole Month page to opt out of static rendering.
+function QuickAddFromQuery({ onQuickAdd }: { onQuickAdd: () => void }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("quickAdd") === "1") {
+      onQuickAdd();
+      router.replace("/month");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  return null;
+}
+
 export default function MonthPage() {
   const [monthStart, setMonthStart] = useState(() => firstOfMonth(todayStr()));
   const [days, setDays] = useState<CalendarDayView[]>([]);
@@ -141,11 +169,12 @@ export default function MonthPage() {
 
   // --- Quick fill (paint) tool -------------------------------------------
   const [quickFillOn, setQuickFillOn] = useState(false);
-  const [parents, setParents] = useState<FamilyMember[]>([]);
+  const [members, setMembers] = useState<FamilyMember[]>([]);
+  const parents = useMemo(() => members.filter((member) => member.kind === "PARENT"), [members]);
   const [hiddenCalendarChildIds, setHiddenCalendarChildIds] = useState<string[]>([]);
   const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const [selectedAction, setSelectedAction] = useState<QuickFillAction | null>(null);
-  const [appointmentNote, setAppointmentNote] = useState("");
+  const [eventNote, setEventNote] = useState("");
   const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction; note?: string }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [quickFillError, setQuickFillError] = useState<string | null>(null);
@@ -153,12 +182,15 @@ export default function MonthPage() {
   const [deletingShiftId, setDeletingShiftId] = useState<string | null>(null);
   const [clearingMonth, setClearingMonth] = useState(false);
 
+  const selectedMember = members.find((m) => m.id === selectedOwnerId) ?? null;
+  const availableActions = selectedMember?.kind === "PARENT" ? PARENT_ACTIONS : CHILD_ACTIONS;
+
   useEffect(() => {
     Promise.all([
       apiFetch<{ members: FamilyMember[] }>("/api/family-members"),
       apiFetch<{ hiddenCalendarChildIds: string[] }>("/api/settings/appearance"),
     ]).then(([family, appearance]) => {
-      setParents(family.members.filter((member) => member.kind === "PARENT"));
+      setMembers(family.members);
       setHiddenCalendarChildIds(appearance.hiddenCalendarChildIds ?? []);
     });
   }, []);
@@ -167,11 +199,12 @@ export default function MonthPage() {
     const jeanicar = parents.find((parent) => /jean/i.test(parent.name) || parent.icon === "mum");
     setQuickFillOn(true);
     // Jeanicar is the person who normally enters variable NHS shifts. Starting
-    // with her selected removes a needless choice while still allowing either
-    // parent to be chosen below.
-    setSelectedOwnerId(jeanicar?.id ?? parents[0]?.id ?? null);
+    // with her selected removes a needless choice while still allowing anyone
+    // else - either parent, or a child for an appointment/activity - to be
+    // chosen below.
+    setSelectedOwnerId(jeanicar?.id ?? parents[0]?.id ?? members[0]?.id ?? null);
     setSelectedAction(null);
-    setAppointmentNote("");
+    setEventNote("");
     setPending(new Map());
     setQuickFillError(null);
   }
@@ -180,14 +213,23 @@ export default function MonthPage() {
     setQuickFillOn(false);
     setSelectedOwnerId(null);
     setSelectedAction(null);
-    setAppointmentNote("");
+    setEventNote("");
     setPending(new Map());
     setQuickFillError(null);
   }
 
+  function selectOwner(ownerId: string) {
+    setSelectedOwnerId(ownerId);
+    // A different person can have a different set of valid actions (a child
+    // can't be painted a work shift), so make them re-pick rather than carry
+    // over a choice that might no longer apply.
+    setSelectedAction(null);
+    setEventNote("");
+  }
+
   function tapDate(date: string) {
     if (!quickFillOn || !selectedOwnerId || !selectedAction) return;
-    if (selectedAction === "APPOINTMENT" && !appointmentNote.trim()) return;
+    if (EVENT_ACTIONS.has(selectedAction) && !eventNote.trim()) return;
     setPending((prev) => {
       const next = new Map(prev);
       const existing = next.get(date);
@@ -197,7 +239,7 @@ export default function MonthPage() {
         next.set(date, {
           ownerId: selectedOwnerId,
           action: selectedAction,
-          note: selectedAction === "APPOINTMENT" ? appointmentNote.trim() : undefined,
+          note: EVENT_ACTIONS.has(selectedAction) ? eventNote.trim() : undefined,
         });
       }
       return next;
@@ -205,9 +247,11 @@ export default function MonthPage() {
   }
 
   function pendingColor(mark: { ownerId: string; action: QuickFillAction }): string {
-    const member = parents.find((p) => p.id === mark.ownerId);
+    const member = members.find((m) => m.id === mark.ownerId);
     if (mark.action === "HOLIDAY") return "var(--family)";
     if (mark.action === "APPOINTMENT") return "var(--accent)";
+    if (mark.action === "ACTIVITY") return "var(--good)";
+    if (mark.action === "OTHER") return "var(--muted)";
     if (!member) return "var(--accent)";
     const cfg = resolveQuickShiftConfig(member);
     if (mark.action === "NIGHT") return cfg.nightColor;
@@ -220,21 +264,21 @@ export default function MonthPage() {
     setQuickFillError(null);
     try {
       await Promise.all([...pending].map(async ([date, mark]) => {
-        if (mark.action === "APPOINTMENT") {
+        if (EVENT_ACTIONS.has(mark.action)) {
           await apiFetch("/api/events", {
             method: "POST",
             body: JSON.stringify({
-              title: (mark.note || "Appointment").trim(),
+              title: (mark.note || ACTION_LABELS[mark.action]).trim(),
               memberIds: [mark.ownerId],
               date,
               startLocal: null,
               endLocal: null,
-              category: "APPOINTMENT",
+              category: mark.action,
             }),
           });
           return;
         }
-        const member = parents.find((p) => p.id === mark.ownerId);
+        const member = members.find((m) => m.id === mark.ownerId);
         if (!member) return;
         const cfg = resolveQuickShiftConfig(member);
         let payload: Record<string, unknown> = { ownerId: mark.ownerId, date, shiftTypeId: null };
@@ -382,6 +426,9 @@ export default function MonthPage() {
 
   return (
     <div className="page-body month-page">
+      <Suspense fallback={null}>
+        <QuickAddFromQuery onQuickAdd={startQuickFill} />
+      </Suspense>
       <section className="month-hero">
         <div className="month-hero-copy">
           <span className="month-eyebrow"><CalendarDays size={14} /> Family command centre</span>
@@ -397,7 +444,7 @@ export default function MonthPage() {
 
       <div className="calendar-actions">
         <button className="calendar-action primary" onClick={() => setPlanScope("month")}><Sparkles size={17} /><span><strong>Plan month</strong><small>Suggest Jeanicar&apos;s shifts</small></span></button>
-        <button className="calendar-action" onClick={quickFillOn ? cancelQuickFill : startQuickFill}><Brush size={17} /><span><strong>{quickFillOn ? "Close shift entry" : "Add shifts"}</strong><small>Jeanicar&apos;s month in a few taps</small></span></button>
+        <button className="calendar-action" onClick={quickFillOn ? cancelQuickFill : startQuickFill}><Brush size={17} /><span><strong>{quickFillOn ? "Close quick add" : "Quick add"}</strong><small>Shifts, leave or appointments in a few taps</small></span></button>
         <button className="calendar-action compact" onClick={() => setPlanScope("year")}><Sparkles size={16} /><span><strong>Plan year</strong></span></button>
         {parents.some((parent) => /jean/i.test(parent.name) || parent.icon === "mum") && (
           <button className="calendar-action compact danger" disabled={clearingMonth} onClick={clearWifeMonth}><Trash2 size={16} /><span><strong>{clearingMonth ? "Clearing…" : "Clear month"}</strong></span></button>
@@ -419,36 +466,39 @@ export default function MonthPage() {
         />
       )}
 
-      {quickFillOn && parents.length > 0 && (
+      {quickFillOn && members.length > 0 && (
         <div className="card quick-fill-panel">
-          <div className="quick-fill-heading"><div><strong>Quick fill</strong><span>Choose who and what, then tap every date you want to paint.</span></div><button className="icon-button" aria-label="Close quick fill" onClick={cancelQuickFill}><X size={18} /></button></div>
+          <div className="quick-fill-heading"><div><strong>Quick add</strong><span>Choose who and what, then tap every date you want to paint.</span></div><button className="icon-button" aria-label="Close quick add" onClick={cancelQuickFill}><X size={18} /></button></div>
           {quickFillError && <div className="error-banner">{quickFillError}</div>}
           <div className="quick-fill-controls">
-            <div><span className="control-label">Who?</span><div className="choice-row">{parents.map((p) => <button key={p.id} className={`choice-chip${selectedOwnerId === p.id ? " selected" : ""}`} onClick={() => setSelectedOwnerId(p.id)}><MemberAvatar icon={p.icon} colorToken={p.colorToken} size={18} />{p.name}</button>)}</div></div>
-            {selectedOwnerId && <div><span className="control-label">What?</span><div className="choice-row">{(Object.keys(ACTION_LABELS) as QuickFillAction[]).map((action) => {
-              const member = parents.find((p) => p.id === selectedOwnerId)!;
-              const cfg = resolveQuickShiftConfig(member);
-              const swatch = action === "DAY" ? cfg.dayColor
-                : action === "NIGHT" ? cfg.nightColor
+            <div><span className="control-label">Who?</span><div className="choice-row">{members.map((m) => <button key={m.id} className={`choice-chip${selectedOwnerId === m.id ? " selected" : ""}`} onClick={() => selectOwner(m.id)}><MemberAvatar icon={m.icon} colorToken={m.colorToken} size={18} />{m.name}</button>)}</div></div>
+            {selectedMember && <div><span className="control-label">What?</span><div className="choice-row">{availableActions.map((action) => {
+              const cfg = selectedMember.kind === "PARENT" ? resolveQuickShiftConfig(selectedMember) : null;
+              const swatch = action === "DAY" ? cfg!.dayColor
+                : action === "NIGHT" ? cfg!.nightColor
                 : action === "HOLIDAY" ? "var(--family)"
                 : action === "OVERTIME" ? "var(--warn)"
+                : action === "ACTIVITY" ? "var(--good)"
+                : action === "OTHER" ? "var(--muted)"
                 : "var(--accent)";
               return <button key={action} className={`choice-chip${selectedAction === action ? " selected" : ""}`} style={{ "--choice-color": swatch } as CSSProperties} onClick={() => setSelectedAction(action)}><i style={{ background: swatch }} />{ACTION_LABELS[action]}</button>;
             })}</div></div>}
-            {selectedAction === "APPOINTMENT" && (
+            {selectedAction && EVENT_ACTIONS.has(selectedAction) && (
               <div className="field" style={{ marginBottom: 0 }}>
-                <label htmlFor="appointment-note">What&apos;s the appointment?</label>
+                <label htmlFor="quick-fill-note">
+                  {selectedAction === "APPOINTMENT" ? "What's the appointment?" : selectedAction === "ACTIVITY" ? "What's the activity?" : "What's this?"}
+                </label>
                 <input
-                  id="appointment-note"
-                  value={appointmentNote}
-                  onChange={(e) => setAppointmentNote(e.target.value)}
+                  id="quick-fill-note"
+                  value={eventNote}
+                  onChange={(e) => setEventNote(e.target.value)}
                   placeholder="e.g. Dentist, 2pm"
                   autoFocus
                 />
               </div>
             )}
           </div>
-          <div className="quick-fill-footer"><span>{selectedOwnerId && selectedAction ? `${pending.size || "No"} date${pending.size === 1 ? "" : "s"} marked` : "Pick a person and shift type to begin"}</span><button className="btn btn-primary" disabled={saving || pending.size === 0} onClick={saveQuickFill}><Check size={16} />{saving ? "Saving…" : `Save${pending.size ? ` ${pending.size}` : ""}`}</button></div>
+          <div className="quick-fill-footer"><span>{selectedOwnerId && selectedAction ? `${pending.size || "No"} date${pending.size === 1 ? "" : "s"} marked` : "Pick a person and what it is to begin"}</span><button className="btn btn-primary" disabled={saving || pending.size === 0} onClick={saveQuickFill}><Check size={16} />{saving ? "Saving…" : `Save${pending.size ? ` ${pending.size}` : ""}`}</button></div>
         </div>
       )}
 
@@ -503,7 +553,7 @@ export default function MonthPage() {
             appointments.forEach((a) => titleLines.push(`📌 ${a.title}`));
             const mark = pending.get(day.date);
             const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction)
-              && (selectedAction !== "APPOINTMENT" || Boolean(appointmentNote.trim()));
+              && (!EVENT_ACTIONS.has(selectedAction!) || Boolean(eventNote.trim()));
             const parentRows = day.members.filter((member) => member.memberKind === "PARENT").sort((a, b) => parentSlot(a.name) - parentSlot(b.name));
             const children = day.members.filter((member) => member.memberKind === "CHILD");
             const visibleChildren = children.filter((child) => !hiddenCalendarChildIds.includes(child.memberId));
