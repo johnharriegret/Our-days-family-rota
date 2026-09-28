@@ -1,17 +1,32 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifySession } from "@/lib/jwt";
 
-const PUBLIC_PATHS = ["/login", "/setup"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/setup",
+  // Android's WebAPK service fetches these without the user's session cookie.
+  // They must stay public or Chrome disables Install and only offers a plain
+  // browser shortcut. No household data is exposed by any of these assets.
+  "/manifest.webmanifest",
+  "/sw.js",
+  "/favicon.ico",
+  "/icon.png",
+  "/apple-icon.png",
+];
+
+export function isPublicPath(pathname: string): boolean {
+  return (
+    PUBLIC_PATHS.includes(pathname) ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/_next/")
+  );
+}
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (
-    PUBLIC_PATHS.some((p) => pathname === p) ||
-    pathname.startsWith("/api/") ||
-    pathname.startsWith("/_next/") ||
-    pathname === "/favicon.ico"
-  ) {
+  if (isPublicPath(pathname)) {
     return NextResponse.next();
   }
 

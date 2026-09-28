@@ -404,7 +404,11 @@ export default function MonthPage() {
       {switchingMonth && <div className="month-loading-badge">Loading {monthLabel}…</div>}
       <section className="calendar-card">
         <div className="calendar-card-head">
-          <div><strong>At a glance</strong><span>Solid = school · ring = home</span></div>
+          <div className="calendar-inline-switcher" aria-label="Choose calendar month">
+            <button type="button" onClick={() => changeMonth(-1)} aria-label="Previous month"><ChevronLeft size={18} /></button>
+            <strong>{monthLabel}</strong>
+            <button type="button" onClick={() => changeMonth(1)} aria-label="Next month"><ChevronRight size={18} /></button>
+          </div>
           <div className="calendar-legend-groups">
             <div className="calendar-legend-group">
               <em>Shifts</em>
