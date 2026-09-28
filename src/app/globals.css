@@ -38,6 +38,10 @@ html, body {
   color: var(--ink);
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-tap-highlight-color: transparent;
+  /* Belt-and-braces: if any child ever overflows its container width again,
+     clip it here instead of widening the whole page - that's what was
+     forcing people to pinch-zoom out to reach fixed elements like the FAB. */
+  overflow-x: hidden;
 }
 
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -244,7 +248,11 @@ a { color: inherit; text-decoration: none; }
 .btn-block { width: 100%; }
 .btn-lg { padding: 20px 22px; font-size: 17px; border-radius: var(--radius-lg); }
 
-.field { margin-bottom: 14px; }
+/* min-width: 0 - without it, a .field used as a flex item (e.g. the Start/
+   End time inputs in the rota editor) won't shrink below its input's
+   intrinsic content width, no matter what width:100% below says, and pushes
+   the whole page wider than the phone screen. */
+.field { margin-bottom: 14px; min-width: 0; }
 .field label {
   display: block;
   font-size: 13px;
@@ -662,6 +670,12 @@ a { color: inherit; text-decoration: none; }
 .month-cell.today { border-color: color-mix(in srgb, var(--accent) 55%, white); }
 .month-cell.today .month-cell-daynum { color: var(--accent); }
 .month-cell.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+/* Leading/trailing days from the neighbouring month, shown so the grid reads
+   as one continuous calendar instead of stopping mid-week - dimmed so the
+   current month still reads as the main event. */
+.month-cell.outside-month { opacity: .42; }
+.month-cell.outside-month:hover { opacity: .62; }
+.month-cell.outside-month.selected { opacity: .85; }
 /* Annual leave reads like the people themselves: Harrie blue, Jeanicar pink,
    and a clean half-and-half border when they are both away. */
 .month-cell.holiday-hg,

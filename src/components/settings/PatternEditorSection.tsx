@@ -96,12 +96,12 @@ export function PatternEditorSection({
       {saved && <div className="pill pill-good" style={{ marginBottom: 12 }}>Saved</div>}
 
       {blocks.map((block, i) => (
-        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 10 }}>
-          <div className="field" style={{ flex: "0 0 70px", marginBottom: 0 }}>
+        <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginBottom: 10 }}>
+          <div className="field" style={{ flex: "0 0 64px", marginBottom: 0 }}>
             <label>Kind</label>
             <input value={block.kind} onChange={(e) => updateBlock(i, { kind: e.target.value.toUpperCase() })} />
           </div>
-          <div className="field" style={{ flex: "0 0 60px", marginBottom: 0 }}>
+          <div className="field" style={{ flex: "0 0 56px", marginBottom: 0 }}>
             <label>Days</label>
             <input
               type="number"
@@ -112,7 +112,7 @@ export function PatternEditorSection({
           </div>
           {block.kind !== "O" && (
             <>
-              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+              <div className="field" style={{ flex: "1 1 100px", minWidth: 100, marginBottom: 0 }}>
                 <label>Start</label>
                 <input
                   type="time"
@@ -120,7 +120,7 @@ export function PatternEditorSection({
                   onChange={(e) => updateBlock(i, { startLocal: e.target.value })}
                 />
               </div>
-              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+              <div className="field" style={{ flex: "1 1 100px", minWidth: 100, marginBottom: 0 }}>
                 <label>End</label>
                 <input
                   type="time"

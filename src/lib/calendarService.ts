@@ -227,6 +227,7 @@ export async function getCalendarRange(
       const endLocal = type?.endLocal ?? manual.customEnd ?? null;
       const working = Boolean(startLocal && endLocal);
       const isLeave = !working && manual.note === "Annual leave";
+      const isOvertime = working && manual.note === "Overtime";
       return {
         known: true,
         working,
@@ -236,7 +237,7 @@ export async function getCalendarRange(
         locked: manual.locked,
         shiftId: manual.id,
         source: manual.source === "PATTERN_OVERRIDE" ? "PATTERN" : "MANUAL",
-        label: type?.name ?? (working ? "Custom shift" : isLeave ? "Annual leave" : "Off"),
+        label: type?.name ?? (working ? (isOvertime ? "Overtime" : "Custom shift") : isLeave ? "Annual leave" : "Off"),
       };
     }
     const pattern = activePattern(patternVersionsByOwner, memberId, date);

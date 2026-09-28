@@ -34,7 +34,7 @@ export default function SetupPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Something went wrong");
-      router.replace("/today");
+      router.replace("/month");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");

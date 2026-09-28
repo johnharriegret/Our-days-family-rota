@@ -10,13 +10,14 @@ import { resolveQuickShiftConfig } from "@/lib/quickShift";
 import { initials } from "@/lib/initials";
 import type { CalendarDayView, FamilyMember } from "@/lib/clientTypes";
 
-type QuickFillAction = "DAY" | "NIGHT" | "OFF" | "HOLIDAY";
+type QuickFillAction = "DAY" | "NIGHT" | "OVERTIME" | "HOLIDAY" | "APPOINTMENT";
 
 const ACTION_LABELS: Record<QuickFillAction, string> = {
   DAY: "Days",
   NIGHT: "Nights",
-  OFF: "Off",
+  OVERTIME: "Overtime",
   HOLIDAY: "Holiday",
+  APPOINTMENT: "Appointment",
 };
 
 function toMinutesOfDay(hhmm: string): number {
@@ -86,6 +87,16 @@ function childMarkerStyle(name: string, fallback: string): CSSProperties {
   return { "--marker-color": childMarkerColor(name, fallback) } as CSSProperties;
 }
 
+// The Monday-to-Sunday grid range that fully covers this month, including
+// the neighbouring month's leading/trailing days needed to fill each week -
+// so the calendar reads as one continuous strip instead of stopping mid-week.
+function gridRangeForMonth(monthStart: string): { start: string; end: string } {
+  const start = mondayOf(monthStart);
+  let end = addDays(monthStart, daysInMonth(monthStart) - 1);
+  while (weekdayIndexMondayFirst(end) !== 6) end = addDays(end, 1);
+  return { start, end };
+}
+
 // The Monday of each week that has any day inside this month.
 function weekStartsForMonth(monthStart: string): string[] {
   const last = addDays(monthStart, daysInMonth(monthStart) - 1);
@@ -134,7 +145,8 @@ export default function MonthPage() {
   const [hiddenCalendarChildIds, setHiddenCalendarChildIds] = useState<string[]>([]);
   const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const [selectedAction, setSelectedAction] = useState<QuickFillAction | null>(null);
-  const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction }>>(new Map());
+  const [appointmentNote, setAppointmentNote] = useState("");
+  const [pending, setPending] = useState<Map<string, { ownerId: string; action: QuickFillAction; note?: string }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [quickFillError, setQuickFillError] = useState<string | null>(null);
   const [editingDay, setEditingDay] = useState<CalendarDayView | null>(null);
@@ -159,6 +171,7 @@ export default function MonthPage() {
     // parent to be chosen below.
     setSelectedOwnerId(jeanicar?.id ?? parents[0]?.id ?? null);
     setSelectedAction(null);
+    setAppointmentNote("");
     setPending(new Map());
     setQuickFillError(null);
   }
@@ -167,19 +180,25 @@ export default function MonthPage() {
     setQuickFillOn(false);
     setSelectedOwnerId(null);
     setSelectedAction(null);
+    setAppointmentNote("");
     setPending(new Map());
     setQuickFillError(null);
   }
 
   function tapDate(date: string) {
     if (!quickFillOn || !selectedOwnerId || !selectedAction) return;
+    if (selectedAction === "APPOINTMENT" && !appointmentNote.trim()) return;
     setPending((prev) => {
       const next = new Map(prev);
       const existing = next.get(date);
       if (existing && existing.ownerId === selectedOwnerId && existing.action === selectedAction) {
         next.delete(date); // tapping the same date again undoes it
       } else {
-        next.set(date, { ownerId: selectedOwnerId, action: selectedAction });
+        next.set(date, {
+          ownerId: selectedOwnerId,
+          action: selectedAction,
+          note: selectedAction === "APPOINTMENT" ? appointmentNote.trim() : undefined,
+        });
       }
       return next;
     });
@@ -187,11 +206,13 @@ export default function MonthPage() {
 
   function pendingColor(mark: { ownerId: string; action: QuickFillAction }): string {
     const member = parents.find((p) => p.id === mark.ownerId);
-    if (mark.action === "OFF") return "var(--muted)";
     if (mark.action === "HOLIDAY") return "var(--family)";
+    if (mark.action === "APPOINTMENT") return "var(--accent)";
     if (!member) return "var(--accent)";
     const cfg = resolveQuickShiftConfig(member);
-    return mark.action === "NIGHT" ? cfg.nightColor : cfg.dayColor;
+    if (mark.action === "NIGHT") return cfg.nightColor;
+    if (mark.action === "OVERTIME") return "var(--warn)";
+    return cfg.dayColor;
   }
 
   async function saveQuickFill() {
@@ -199,6 +220,20 @@ export default function MonthPage() {
     setQuickFillError(null);
     try {
       await Promise.all([...pending].map(async ([date, mark]) => {
+        if (mark.action === "APPOINTMENT") {
+          await apiFetch("/api/events", {
+            method: "POST",
+            body: JSON.stringify({
+              title: (mark.note || "Appointment").trim(),
+              memberIds: [mark.ownerId],
+              date,
+              startLocal: null,
+              endLocal: null,
+              category: "APPOINTMENT",
+            }),
+          });
+          return;
+        }
         const member = parents.find((p) => p.id === mark.ownerId);
         if (!member) return;
         const cfg = resolveQuickShiftConfig(member);
@@ -207,10 +242,10 @@ export default function MonthPage() {
           payload = { ...payload, customStart: cfg.dayStartLocal, customEnd: cfg.dayEndLocal, paidMinutes: shiftDurationMinutes(cfg.dayStartLocal, cfg.dayEndLocal) };
         } else if (mark.action === "NIGHT") {
           payload = { ...payload, customStart: cfg.nightStartLocal, customEnd: cfg.nightEndLocal, paidMinutes: shiftDurationMinutes(cfg.nightStartLocal, cfg.nightEndLocal) };
+        } else if (mark.action === "OVERTIME") {
+          payload = { ...payload, customStart: cfg.dayStartLocal, customEnd: cfg.dayEndLocal, paidMinutes: shiftDurationMinutes(cfg.dayStartLocal, cfg.dayEndLocal), note: "Overtime" };
         } else if (mark.action === "HOLIDAY") {
           payload = { ...payload, customStart: null, customEnd: null, note: "Annual leave" };
-        } else {
-          payload = { ...payload, customStart: null, customEnd: null };
         }
         await apiFetch("/api/shifts", { method: "POST", body: JSON.stringify(payload) });
       }));
@@ -255,19 +290,21 @@ export default function MonthPage() {
   // -------------------------------------------------------------------------
 
   const fetchMonth = useCallback(async (month: string) => {
-    const to = addDays(month, daysInMonth(month) - 1);
-    return apiFetch<{ days: CalendarDayView[] }>(`/api/calendar?from=${month}&to=${to}`).then((data) => data.days);
+    const { start, end } = gridRangeForMonth(month);
+    return apiFetch<{ days: CalendarDayView[] }>(`/api/calendar?from=${start}&to=${end}`).then((data) => data.days);
   }, []);
 
   const showDays = useCallback((nextDays: CalendarDayView[]) => {
     setDays(nextDays);
+    const currentMonthKey = monthStart.slice(0, 7);
     setEditingDay((current) =>
       nextDays.find((day) => day.date === current?.date)
       ?? nextDays.find((day) => day.date === todayStr())
+      ?? nextDays.find((day) => day.date.slice(0, 7) === currentMonthKey)
       ?? nextDays[0]
       ?? null,
     );
-  }, []);
+  }, [monthStart]);
 
   const load = useCallback(async (force = false) => {
     const cached = !force ? monthCache.current.get(monthStart) : undefined;
@@ -318,15 +355,16 @@ export default function MonthPage() {
   }, [load]);
   useCalendarChangedListener(refreshCalendar);
 
-  const leadingBlanks = weekdayIndexMondayFirst(monthStart);
   const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(
     new Date(`${monthStart}T12:00:00Z`),
   );
-  const monthChildren = days[0]?.members.filter((member) =>
+  const monthKey = monthStart.slice(0, 7);
+  const inMonthDays = days.filter((day) => day.date.slice(0, 7) === monthKey);
+  const monthChildren = (inMonthDays[0] ?? days[0])?.members.filter((member) =>
     member.memberKind === "CHILD" && !hiddenCalendarChildIds.includes(member.memberId),
   ) ?? [];
-  const conflictCount = days.filter((day) => day.childcare?.status === "CHILDCARE_NEEDED").length;
-  const togetherCount = days.filter((day) => day.bothParentsOff).length;
+  const conflictCount = inMonthDays.filter((day) => day.childcare?.status === "CHILDCARE_NEEDED").length;
+  const togetherCount = inMonthDays.filter((day) => day.bothParentsOff).length;
 
   function goToToday() {
     const today = todayStr();
@@ -390,9 +428,25 @@ export default function MonthPage() {
             {selectedOwnerId && <div><span className="control-label">What?</span><div className="choice-row">{(Object.keys(ACTION_LABELS) as QuickFillAction[]).map((action) => {
               const member = parents.find((p) => p.id === selectedOwnerId)!;
               const cfg = resolveQuickShiftConfig(member);
-              const swatch = action === "DAY" ? cfg.dayColor : action === "NIGHT" ? cfg.nightColor : action === "HOLIDAY" ? "var(--family)" : "var(--muted)";
+              const swatch = action === "DAY" ? cfg.dayColor
+                : action === "NIGHT" ? cfg.nightColor
+                : action === "HOLIDAY" ? "var(--family)"
+                : action === "OVERTIME" ? "var(--warn)"
+                : "var(--accent)";
               return <button key={action} className={`choice-chip${selectedAction === action ? " selected" : ""}`} style={{ "--choice-color": swatch } as CSSProperties} onClick={() => setSelectedAction(action)}><i style={{ background: swatch }} />{ACTION_LABELS[action]}</button>;
             })}</div></div>}
+            {selectedAction === "APPOINTMENT" && (
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label htmlFor="appointment-note">What&apos;s the appointment?</label>
+                <input
+                  id="appointment-note"
+                  value={appointmentNote}
+                  onChange={(e) => setAppointmentNote(e.target.value)}
+                  placeholder="e.g. Dentist, 2pm"
+                  autoFocus
+                />
+              </div>
+            )}
           </div>
           <div className="quick-fill-footer"><span>{selectedOwnerId && selectedAction ? `${pending.size || "No"} date${pending.size === 1 ? "" : "s"} marked` : "Pick a person and shift type to begin"}</span><button className="btn btn-primary" disabled={saving || pending.size === 0} onClick={saveQuickFill}><Check size={16} />{saving ? "Saving…" : `Save${pending.size ? ` ${pending.size}` : ""}`}</button></div>
         </div>
@@ -438,17 +492,16 @@ export default function MonthPage() {
           ))}
         </div>
         <div className="month-grid">
-          {Array.from({ length: leadingBlanks }).map((_, i) => (
-            <div key={`blank-${i}`} />
-          ))}
           {days.map((day) => {
             const dayNum = Number(day.date.slice(8, 10));
             const isToday = day.date === todayStr();
+            const isOutsideMonth = day.date.slice(0, 7) !== monthKey;
             const hasConflict = day.childcare?.status === "CHILDCARE_NEEDED";
             const titleLines = day.members.map((m) => `${m.name}: ${m.label}`);
             if (hasConflict && day.childcare) titleLines.push(`⚠ ${day.childcare.explanation}`);
             const mark = pending.get(day.date);
-            const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction);
+            const canPaint = quickFillOn && Boolean(selectedOwnerId) && Boolean(selectedAction)
+              && (selectedAction !== "APPOINTMENT" || Boolean(appointmentNote.trim()));
             const parentRows = day.members.filter((member) => member.memberKind === "PARENT").sort((a, b) => parentSlot(a.name) - parentSlot(b.name));
             const children = day.members.filter((member) => member.memberKind === "CHILD");
             const visibleChildren = children.filter((child) => !hiddenCalendarChildIds.includes(child.memberId));
@@ -460,7 +513,7 @@ export default function MonthPage() {
               <button
                 type="button"
                 key={day.date}
-                className={`month-cell${hasConflict ? " conflict" : ""}${holidayClass}${isToday ? " today" : ""}${editingDay?.date === day.date ? " selected" : ""}`}
+                className={`month-cell${hasConflict ? " conflict" : ""}${holidayClass}${isToday ? " today" : ""}${editingDay?.date === day.date ? " selected" : ""}${isOutsideMonth ? " outside-month" : ""}`}
                 style={{
                   ...(mark ? { boxShadow: `inset 0 0 0 3px ${pendingColor(mark)}` } : undefined),
                 }}
