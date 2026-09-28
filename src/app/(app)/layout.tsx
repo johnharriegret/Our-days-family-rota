@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CalendarDays, LogOut, Plus, Settings2 } from "lucide-react";
 import { AddSheet } from "@/components/AddSheet";
+import { InstallAppButton } from "@/components/InstallAppButton";
 import { apiFetch } from "@/lib/client";
 import { emitCalendarChanged } from "@/lib/refresh";
 
@@ -39,9 +40,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="brand-mark">☀️</div>
           Our Days
         </div>
-        <button className="header-action" onClick={logout} aria-label="Sign out">
-          <LogOut size={17} /> <span>Sign out</span>
-        </button>
+        <div className="header-tools">
+          <InstallAppButton />
+          <button className="header-action" onClick={logout} aria-label="Sign out">
+            <LogOut size={17} /> <span>Sign out</span>
+          </button>
+        </div>
       </div>
 
       {children}
