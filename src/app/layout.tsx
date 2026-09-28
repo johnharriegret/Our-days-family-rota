@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,7 +31,22 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <Script id="our-days-pwa-bootstrap" strategy="beforeInteractive">{`
+          window.__ourDaysInstallPrompt = null;
+          window.addEventListener("beforeinstallprompt", function (event) {
+            event.preventDefault();
+            window.__ourDaysInstallPrompt = event;
+            window.dispatchEvent(new Event("ourdaysinstallready"));
+          });
+          if ("serviceWorker" in navigator) {
+            window.addEventListener("load", function () {
+              navigator.serviceWorker.register("/sw.js").catch(function () {});
+            });
+          }
+        `}</Script>
+        {children}
+      </body>
     </html>
   );
 }

@@ -12,6 +12,9 @@ declare global {
   interface Navigator {
     standalone?: boolean;
   }
+  interface Window {
+    __ourDaysInstallPrompt?: InstallPromptEvent | null;
+  }
 }
 
 export function InstallAppButton() {
@@ -37,9 +40,16 @@ export function InstallAppButton() {
     setIsAndroid(/Android/.test(navigator.userAgent));
     setReady(true);
 
+    function syncCapturedPrompt() {
+      if (window.__ourDaysInstallPrompt) setInstallPrompt(window.__ourDaysInstallPrompt);
+    }
+    syncCapturedPrompt();
+
     function captureInstallPrompt(event: Event) {
       event.preventDefault();
-      setInstallPrompt(event as InstallPromptEvent);
+      const promptEvent = event as InstallPromptEvent;
+      window.__ourDaysInstallPrompt = promptEvent;
+      setInstallPrompt(promptEvent);
     }
 
     function markInstalled() {
@@ -48,18 +58,24 @@ export function InstallAppButton() {
     }
 
     window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    window.addEventListener("ourdaysinstallready", syncCapturedPrompt);
     window.addEventListener("appinstalled", markInstalled);
     return () => {
       window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
+      window.removeEventListener("ourdaysinstallready", syncCapturedPrompt);
       window.removeEventListener("appinstalled", markInstalled);
     };
   }, []);
 
   async function install() {
-    if (installPrompt) {
-      await installPrompt.prompt();
-      const choice = await installPrompt.userChoice;
+    // The beforeInteractive bootstrap catches Chrome's event even when it
+    // fires before React hydrates this button.
+    const promptEvent = installPrompt ?? window.__ourDaysInstallPrompt;
+    if (promptEvent) {
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
       if (choice.outcome === "accepted") setIsStandalone(true);
+      window.__ourDaysInstallPrompt = null;
       setInstallPrompt(null);
       return;
     }

@@ -4,6 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Our Days · Family rota",
     short_name: "Our Days",
+    id: "/",
     description: "The Gret family calendar, shifts and school days.",
     start_url: "/month",
     scope: "/",
