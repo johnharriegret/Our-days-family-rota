@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Settings2 } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { FamilyMembersSection } from "@/components/settings/FamilyMembersSection";
 import { PatternEditorSection } from "@/components/settings/PatternEditorSection";
@@ -47,6 +48,14 @@ export default function SettingsPage() {
 
   return (
     <div className="page-body">
+      <section className="month-hero compact">
+        <div className="month-hero-copy">
+          <span className="month-eyebrow"><Settings2 size={14} /> Settings</span>
+          <h1>Household settings</h1>
+          <p>Family members, rotas, schools and rules — all in one place.</p>
+        </div>
+      </section>
+
       <FamilyMembersSection members={data.members} schools={data.schools} onChanged={load} />
       <PatternEditorSection parents={parents} initialPatternsByOwnerId={data.patternsByOwnerId} />
       <ShiftTypesSection parents={parents} initialShiftTypesByOwnerId={data.shiftTypesByOwnerId} />

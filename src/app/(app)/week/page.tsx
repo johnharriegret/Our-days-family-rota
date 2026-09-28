@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Heart, Sparkles } from "lucide-react";
+import { CalendarRange, ChevronLeft, ChevronRight, Heart, Sparkles } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
@@ -67,25 +67,28 @@ export default function WeekPage() {
     apiFetch<{ togetherColor: string }>("/api/settings/appearance").then((d) => setTogetherColor(d.togetherColor));
   }, []);
 
+  const togetherThisWeek = days.filter((day) => day.bothParentsOff).length;
+
   return (
     <div className="page-body">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <button className="btn btn-ghost" onClick={() => setWeekStart((w) => addDays(w, -7))} aria-label="Previous week">
-          <ChevronLeft size={22} />
-        </button>
-        <strong>{dayLabel(weekStart).day} {"–"} {dayLabel(addDays(weekStart, 6)).day}</strong>
-        <button className="btn btn-ghost" onClick={() => setWeekStart((w) => addDays(w, 7))} aria-label="Next week">
-          <ChevronRight size={22} />
+      <section className="month-hero compact">
+        <div className="month-hero-copy">
+          <span className="month-eyebrow"><CalendarRange size={14} /> This week</span>
+          <h1>{dayLabel(weekStart).day} – {dayLabel(addDays(weekStart, 6)).day}</h1>
+          <p>{togetherThisWeek} day{togetherThisWeek === 1 ? "" : "s"} off together this week</p>
+        </div>
+        <div className="month-switcher" aria-label="Choose week">
+          <button onClick={() => setWeekStart((w) => addDays(w, -7))} aria-label="Previous week"><ChevronLeft size={20} /></button>
+          <button className="today-jump" onClick={() => setWeekStart(mondayOf(todayStr()))}>This week</button>
+          <button onClick={() => setWeekStart((w) => addDays(w, 7))} aria-label="Next week"><ChevronRight size={20} /></button>
+        </div>
+      </section>
+
+      <div className="calendar-actions single">
+        <button className="calendar-action primary" onClick={() => setShowPlan(true)}>
+          <Sparkles size={17} /><span><strong>Plan the week</strong><small>Best shifts to request</small></span>
         </button>
       </div>
-
-      <button
-        className="btn btn-primary btn-block"
-        onClick={() => setShowPlan(true)}
-        style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
-      >
-        <Sparkles size={17} /> Plan the week — best shifts to request
-      </button>
 
       {showPlan && (
         <PlanWeekSheet
@@ -103,7 +106,7 @@ export default function WeekPage() {
           const { weekday, day: dayNum } = dayLabel(day.date);
           const isToday = day.date === todayStr();
           return (
-            <div className="card week-day-card" key={day.date} style={isToday ? { outline: "2px solid var(--accent)" } : undefined}>
+            <div className={`card week-day-card${isToday ? " today" : ""}`} key={day.date}>
               <div className="week-day-header">
                 <span className="week-day-name">{weekday}</span>
                 <span className="week-day-date">{dayNum}</span>

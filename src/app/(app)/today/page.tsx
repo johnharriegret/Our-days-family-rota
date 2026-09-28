@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Heart } from "lucide-react";
+import { Heart, Sun } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
@@ -56,9 +56,22 @@ export default function TodayPage() {
   if (!today) return null;
 
   const needsSetup = today.members.some((m) => m.source === "NONE");
+  const statusLine = today.childcare?.status === "CHILDCARE_NEEDED"
+    ? "Childcare needs sorting today"
+    : today.bothParentsOff
+      ? "You're both off today"
+      : "Cover looks set for today";
 
   return (
     <div className="page-body">
+      <section className="month-hero compact">
+        <div className="month-hero-copy">
+          <span className="month-eyebrow"><Sun size={14} /> Today</span>
+          <h1>{friendlyDate(today.date)}</h1>
+          <p>{statusLine}</p>
+        </div>
+      </section>
+
       {needsSetup && (
         <div className="setup-banner">
           Finish setting up your family so the calendar and childcare checks work — add everyone&apos;s
@@ -67,7 +80,7 @@ export default function TodayPage() {
       )}
 
       <div className="card">
-        <h2>Today · {friendlyDate(today.date)}</h2>
+        <h2>Who&apos;s doing what</h2>
         {today.members.map((m) => (
           <div className="row" key={m.memberId}>
             <MemberAvatar icon={m.icon} colorToken={m.colorToken} color={m.displayColor} />
