@@ -1,6 +1,6 @@
 # Our Days — Handoff / Takeover Brief
 
-Last updated: 2026-09-27, late (Session 4). Read this fully before making
+Last updated: 2026-09-28, 10:10 BST (Session 7). Read this fully before making
 changes - it's the "pick this project up from zero" document, same idea as the
 sibling `siteroster` project's own `HANDOFF.md`. **Read §11 first if you're
 picking this up fresh**, then §10: between them they cover a whole-scheduler
@@ -741,3 +741,133 @@ it for real, stand up the local Postgres per §11.6.
   the youngest's morning routine, set Settings → Childcare rule → "below this age
   an adult must do the school run" above the youngest's age; `schoolRunMorningFromLocal`
   controls when the morning duty starts.
+
+---
+
+## 13. Session 6 (2026-09-27): CodeRabbit C1/H1/S3/H3 follow-up
+
+Implemented and verified locally (125 passing, 4 DB-backed tests skipped without
+`POSTGRES_URL`; ESLint and `tsc --noEmit` clean):
+
+- **C1:** `PlanWeekSheet` now types and uses server diagnostics. It keeps the
+  absolute “every option leaves a gap” statement only when every no-safe result
+  was exhaustively searched. A truncated search states that it was too large to
+  check exhaustively and displays generated/safe counts. Per-week server
+  messages remain visible above each card.
+- **H1:** `workingInterval` now treats a parent with at least one configured
+  shift type, no active pattern, and no saved shift as known off — exactly as
+  the calendar does. `tests/crossService.test.ts` pins calendar/planner
+  agreement for the otherwise-hidden childcare conflict (runs with Postgres).
+- **S3:** TERM weekday lists are normalised at the API boundary: empty or
+  wholly invalid lists become Monday-Friday, never a silently non-attending
+  term. `tests/school.test.ts` pins this.
+- **H3:** pattern-version selection, age calculation, time conversion and
+  child-day construction now live in `src/lib/householdContext.ts`, used by both
+  calendar and optimiser services. Do not duplicate them back into either
+  service.
+
+Still deliberately NOT changed: S1/S2. Confirm the UK nation for bank holidays
+and whether more than one parent can have a weekly-hours requirement before
+altering those rules.
+
+---
+
+## 14. Session 7 (2026-09-28): phone installation + Month UI handoff
+
+### 14.1 Exact deployed state
+
+- Production: `https://gretresidencerota.vercel.app`
+- GitHub `main` production commit: **`5c9960c8ea9ce291fbb28d5e186616aff63f8287`**
+  (`fix phone installation and tidy calendar header`). Vercel reported success.
+- Equivalent local commit in the working clone: **`694cabc`**. The hashes differ
+  because production was published through the GitHub object API, but the file
+  tree/content is the same.
+- Working tree was clean at handoff.
+
+### 14.2 Android/iPhone install failure: root cause and fix
+
+The user's Samsung S24 showed Chrome's **“Install and create shortcut”** sheet,
+but **Install** was disabled with “This app cannot be installed”; choosing the
+shortcut produced a grey `V` icon with a Chrome badge.
+
+The high-confidence root cause was `src/proxy.ts`: Android's WebAPK service
+fetches installation files without the user's session cookie, and Proxy was
+returning `307 /login` for the manifest, service worker and icons. This also
+blocked Safari's Apple icon when fetched without a session.
+
+`src/proxy.ts` now deliberately makes only these non-sensitive assets public:
+
+- `/manifest.webmanifest`
+- `/sw.js`
+- `/favicon.ico`
+- `/icon.png`
+- `/apple-icon.png`
+- `/icons/*`
+
+Do **not** make `/month`, `/settings`, or any household data public. Signed-out
+verification after deployment returned:
+
+- manifest: `200 application/manifest+json`
+- service worker: `200 application/javascript`
+- Android 192, 512 and maskable 512 icons: `200 image/png`
+- Apple icon: `200 image/png` (source is a real 180×180 PNG)
+- `/month`: still `307 /login`, as required
+
+`tests/proxy.test.ts` pins both halves of that contract: install assets public,
+rota/settings pages private. Earlier commits in the same sequence added the
+manifest icons, network-only service worker (it intentionally caches no private
+family data), dedicated Apple icon and an early `beforeinstallprompt` capture in
+`src/app/layout.tsx` so React hydration cannot miss Chrome's event.
+
+**User retest still outstanding:** the failure screenshot was taken at 09:54,
+before this Proxy fix deployed. Ask the user to remove the old grey shortcut,
+fully close/reopen Chrome, open the live site, tap **Install app**, then choose
+**Install** (not Create shortcut). If it still fails, obtain a fresh screenshot
+and timestamp before changing code again; first suspect Chrome's cached failed
+installability state or an existing stale WebAPK. For Jeanicar's iPhone, test in
+Safari via Share → Add to Home Screen; the Apple icon is now publicly reachable.
+
+### 14.3 Month calendar cleanup now live
+
+The user supplied a mobile screenshot showing the old `At a glance` copy and a
+cramped wrapping legend. The calendar card header was rebuilt:
+
+- `At a glance` and `Solid = school · ring = home` are removed.
+- The actual month/year (for example `September 2026`) is centred inside the
+  calendar card, so it remains visible after scrolling past the hero.
+- Pale previous/next buttons sit directly beside that month heading.
+- The colour key is two straight rows: `Shifts` then `School`. Parent shift
+  colours are four aligned columns (`HG Day`, `HG Night`, `JG Day`, `JG Night`);
+  child markers occupy the school row.
+- Live browser verification confirmed the lower arrows changed September →
+  October → September, two legend rows rendered, and no `At a glance` remained.
+
+The broader live Month screen already includes the decisions from the preceding
+session: Month is the primary view, each date is clickable for full details,
+HG/JG off text and yellow cell fills are removed, HG/JG occupy stable first and
+second parent lanes, child markers can be hidden in Settings, holiday borders
+are blue for Harrie/pink for Jeanicar/split for both, Jeanicar has a Clear month
+button, adjacent months are prefetched to reduce switching lag, and optimiser
+Review & edit opens as a modal rather than an inline section.
+
+### 14.4 Verification and known environment note
+
+- `npm test`: **127 total; 123 pass; 4 expected DB-backed skips; 0 failures**.
+- `npm run lint`: clean.
+- `npx tsc --noEmit`: clean.
+- Vercel production build/deployment: success.
+- A local `npm run build` compiled and type-checked, then stopped while collecting
+  API route data because this scratch clone has no `POSTGRES_URL`. That is an
+  expected environment limitation; production has the database variable and
+  built successfully.
+
+### 14.5 S1/S2 clarification received from the user
+
+The family is in **England**. Jeanicar's requirement is **36 hours every week**.
+Harrie described his own work as continuing from his repeating 4-on/4-off rota,
+not as a flexible weekly target the optimiser should fill. His wording also said
+they have “separate weekly hours requirements”, so do not silently generalise the
+planner to multiple flexible owners: re-confirm the intended Harrie constraint
+before changing owner selection. The England/Wales bank-holiday table still ends
+in 2027 and should be extended from an authoritative GOV.UK source when planning
+beyond that year.
