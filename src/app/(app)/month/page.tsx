@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Brush, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Sparkles, Trash2, X } from "lucide-react";
+import { Brush, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Pencil, Sparkles, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
@@ -181,6 +181,10 @@ export default function MonthPage() {
   const [editingDay, setEditingDay] = useState<CalendarDayView | null>(null);
   const [deletingShiftId, setDeletingShiftId] = useState<string | null>(null);
   const [clearingMonth, setClearingMonth] = useState(false);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [eventDraftTitle, setEventDraftTitle] = useState("");
+  const [eventBusyId, setEventBusyId] = useState<string | null>(null);
+  const [eventError, setEventError] = useState<string | null>(null);
 
   const selectedMember = members.find((m) => m.id === selectedOwnerId) ?? null;
   const availableActions = selectedMember?.kind === "PARENT" ? PARENT_ACTIONS : CHILD_ACTIONS;
@@ -312,6 +316,42 @@ export default function MonthPage() {
       setQuickFillError(err instanceof Error ? err.message : "Couldn't remove that shift");
     } finally {
       setDeletingShiftId(null);
+    }
+  }
+
+  function openEventEdit(event: { id: string; title: string }) {
+    setEditingEventId(event.id);
+    setEventDraftTitle(event.title);
+    setEventError(null);
+  }
+
+  async function saveEventEdit(eventId: string) {
+    if (!eventDraftTitle.trim()) return;
+    setEventBusyId(eventId);
+    setEventError(null);
+    try {
+      await apiFetch(`/api/events/${eventId}`, { method: "PATCH", body: JSON.stringify({ title: eventDraftTitle.trim() }) });
+      setEditingEventId(null);
+      emitCalendarChanged();
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : "Couldn't save that change");
+    } finally {
+      setEventBusyId(null);
+    }
+  }
+
+  async function deleteEvent(eventId: string, title: string) {
+    if (!confirm(`Remove "${title}" from the calendar?`)) return;
+    setEventBusyId(eventId);
+    setEventError(null);
+    try {
+      await apiFetch(`/api/events/${eventId}`, { method: "DELETE" });
+      if (editingEventId === eventId) setEditingEventId(null);
+      emitCalendarChanged();
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : "Couldn't remove that");
+    } finally {
+      setEventBusyId(null);
     }
   }
 
@@ -648,7 +688,46 @@ export default function MonthPage() {
           {editingDay.events.length > 0 && (
             <div className="inspector-section">
               <div className="inspector-title"><CalendarDays size={15} /> Appointments &amp; activities</div>
-              {editingDay.events.map((event) => <div className="event-detail" key={event.id}><strong>{event.startLocal ?? "All day"}</strong><span>{event.title}</span></div>)}
+              {eventError && <div className="error-banner">{eventError}</div>}
+              {editingDay.events.map((event) => {
+                const category = event.category.charAt(0) + event.category.slice(1).toLowerCase();
+                const isEditing = editingEventId === event.id;
+                const isBusy = eventBusyId === event.id;
+                if (isEditing) {
+                  return (
+                    <div className="inspector-row" key={event.id}>
+                      <div className="inspector-row-copy">
+                        <input
+                          value={eventDraftTitle}
+                          onChange={(e) => setEventDraftTitle(e.target.value)}
+                          autoFocus
+                          style={{ width: "100%", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px", fontSize: 13.5 }}
+                        />
+                      </div>
+                      <button className="btn btn-ghost" disabled={isBusy} onClick={() => setEditingEventId(null)} aria-label="Cancel" style={{ padding: 8, minHeight: "auto" }}>
+                        <X size={17} />
+                      </button>
+                      <button className="btn btn-ghost" disabled={isBusy || !eventDraftTitle.trim()} onClick={() => saveEventEdit(event.id)} aria-label="Save" style={{ color: "var(--accent)", padding: 8, minHeight: "auto" }}>
+                        <Check size={17} />
+                      </button>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="inspector-row" key={event.id}>
+                    <div className="inspector-row-copy">
+                      <div className="row-title">{event.title}</div>
+                      <div className="row-sub">{event.startLocal ? `${event.startLocal}${event.endLocal ? `–${event.endLocal}` : ""}` : "All day"} · {category}</div>
+                    </div>
+                    <button className="btn btn-ghost" disabled={isBusy} onClick={() => openEventEdit(event)} aria-label={`Edit ${event.title}`} style={{ padding: 8, minHeight: "auto" }}>
+                      <Pencil size={16} />
+                    </button>
+                    <button className="btn btn-ghost" disabled={isBusy} onClick={() => deleteEvent(event.id, event.title)} aria-label={`Remove ${event.title}`} style={{ color: "var(--bad)", padding: 8, minHeight: "auto" }}>
+                      <Trash2 size={17} />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </aside>
