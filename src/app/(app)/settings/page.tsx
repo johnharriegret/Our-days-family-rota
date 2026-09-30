@@ -8,6 +8,7 @@ import { PatternEditorSection } from "@/components/settings/PatternEditorSection
 import { ShiftTypesSection } from "@/components/settings/ShiftTypesSection";
 import { SchoolsSection, type SchoolWithTerms } from "@/components/settings/SchoolsSection";
 import { ChildcareRuleSection, type ChildcareRule } from "@/components/settings/ChildcareRuleSection";
+import { IntegrationsSection } from "@/components/settings/IntegrationsSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import type { FamilyMember, ShiftType } from "@/lib/clientTypes";
 
@@ -56,6 +57,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      <IntegrationsSection />
       <FamilyMembersSection members={data.members} schools={data.schools} onChanged={load} />
       <PatternEditorSection parents={parents} initialPatternsByOwnerId={data.patternsByOwnerId} />
       <ShiftTypesSection parents={parents} initialShiftTypesByOwnerId={data.shiftTypesByOwnerId} />

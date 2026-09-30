@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { validateCalendarRange } from "./integrations/calendar";
 import {
   DEFAULT_MAX_UNSUPERVISED_MINUTES,
   DEFAULT_PICKUP_BUFFER_MINUTES,
@@ -105,6 +106,7 @@ export async function getCalendarRange(
   from: string,
   to: string,
 ): Promise<CalendarDayView[]> {
+  validateCalendarRange(from, to, 370);
   const fromDate = new Date(`${from}T00:00:00.000Z`);
   const toDate = new Date(`${to}T00:00:00.000Z`);
   const contextFrom = addDays(from, -1);
