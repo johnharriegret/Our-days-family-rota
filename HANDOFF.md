@@ -32,7 +32,7 @@ Today/Week/Month calendar, days-off-together — is built, tested, and live.
 | GitHub | `https://github.com/johnharriegret/our-days-family-rota` — **private**, branch `main`, owner `johnharriegret` |
 | Vercel | Project **"gretresidencerota"**, team **"JCZ Compliance"** (`jcz-compliance`, team id `team_kB0f1hwImHFRKmuNLMZ5vmEn`). Auto-deploys on push to `main` (Git integration connected 2026-09-27 — see §9 gotcha #1 for how that connection was made). |
 | Supabase | Postgres connected via the Vercel Supabase integration on the `gretresidencerota` project (env vars `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` / `SUPABASE_URL` etc. — see the project's Vercel integration settings for the actual Supabase dashboard link; not recorded here since this session never had a reason to open it directly). |
-| Admin/setup | First-run `/setup` page, gated by the `SETUP_TOKEN` env var. **Current value was reset during this session** (the original was unrecoverable — see §9 gotcha #2) to `a5d4dd84ed7715e235d6717b37cc542be4f2ecce65b9ff0a`. Once the first admin account is created, `/setup` locks itself (409s) and this token stops mattering — the founder should still treat it as spent/rotate it as a habit rather than assume it's still meaningful. |
+| Admin/setup | First-run `/setup` page, gated by the `SETUP_TOKEN` env var. The previous setup token has been removed from this document; credentials belong in deployment environment variables. Once the first admin account is created, `/setup` locks itself (409s) and this token stops mattering — the founder should still treat it as spent/rotate it as a habit rather than assume it's still meaningful. |
 | Session secret | `SESSION_SECRET` — already set on Vercel, never read back this session (same write-only reasoning as the setup token). |
 | Anthropic API key | `ANTHROPIC_API_KEY` — **not set as of end of Session 2**. Powers the photo/PDF school-calendar importer (§9.4); everything else works without it. The founder said in Session 2 they'd "found a way to organize it" themselves — don't chase adding it unless asked. Optional `ANTHROPIC_MODEL` env var overrides the model (defaults to `claude-sonnet-5` in `src/lib/schoolVisionImport.ts`). |
 
@@ -871,3 +871,28 @@ planner to multiple flexible owners: re-confirm the intended Harrie constraint
 before changing owner selection. The England/Wales bank-holiday table still ends
 in 2027 and should be extended from an authoritative GOV.UK source when planning
 beyond that year.
+
+
+## 16. Home Assistant calendar integration (2026-09-30)
+
+Branch `feat/home-assistant-calendar` adds read-only integration keys in admin
+Settings, `/api/integrations/summary` for HA/Jarvis, and an authenticated ICS feed
+at `/api/integrations/calendar.ics`. Key material is shown once, hashed in the
+existing APIKey table, scoped to calendar reads and revocable. No migration or
+new env variables. Basic authentication is supported only on the ICS feed for
+HA Remote Calendar (username `our-days`, password the integration key).
+
+See `docs/HOME_ASSISTANT.md` for setup, limits and review findings, and
+`docs/home-assistant/` for ready-to-adapt sensor and dashboard YAML. Full shared
+days exclude a previous night's shift running into the morning. Rota-only days
+off are separately exposed. Blank manual rota days retain the app's existing
+assumption that the parent is off; sleep after nights is not inferred.
+
+Calendar-service ranges now validate before DB reads and accept at most 370
+inclusive dates, preserving annual views. Tests cover malformed/range-limited
+dates, carryover, missing context, event timing, ICS escaping/Unicode folding,
+and scoped key authentication. API keys cannot call existing cookie-auth write
+APIs. This is REST plus ICS, not an MCP transport.
+
+The HA connection still needs deployment, an admin-generated key and HA setup.
+No production DB or HA configuration was edited as part of this branch.

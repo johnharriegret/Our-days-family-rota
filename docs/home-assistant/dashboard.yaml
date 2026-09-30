@@ -1,0 +1,50 @@
+# Add a view to your existing dashboard. Replace calendar IDs with those HA
+# actually creates after adding the three Remote Calendar integrations.
+title: Our Days
+path: our-days
+icon: mdi:calendar-heart
+cards:
+  - type: markdown
+    title: This week together
+    content: >-
+      {% set updated = states('sensor.our_days_summary') %}
+      {% set week = state_attr('sensor.our_days_summary', 'week') %}
+      {% if updated in ['unknown', 'unavailable'] or not week %}
+        Our Days is unavailable. Check the connection before planning.
+      {% elif (as_timestamp(now()) - as_timestamp(updated, 0)) > 900 %}
+        Calendar data is stale. Last update: {{ updated }}. Check the connection.
+      {% else %}
+        **Full days off together:**
+        {% for date in week.fullDaysOffTogether %}
+          {{ as_timestamp(date ~ 'T12:00:00') | timestamp_custom('%A %d %B') }}{{ ', ' if not loop.last else '' }}
+        {% else %}None this week.{% endfor %}
+
+        **Next full day off:** {{ state_attr('sensor.our_days_summary', 'nextFullDayOffTogether') or 'None in the next 60 days' }}
+
+        {% set appointment = state_attr('sensor.our_days_summary', 'nextAppointment') %}
+        **Next appointment:** {% if appointment %}{{ appointment.title }} — {{ appointment.date }} {{ appointment.startLocal or '(all day)' }}{% else %}None in the next 60 days.{% endif %}
+      {% endif %}
+  - type: calendar
+    initial_view: dayGridMonth
+    entities:
+      - calendar.our_days_appointments
+      - calendar.our_days_shifts
+      - calendar.our_days_together
+  - type: markdown
+    title: Coming up
+    content: >-
+      {% if states('sensor.our_days_summary') in ['unknown', 'unavailable'] %}
+        Calendar unavailable.
+      {% elif (as_timestamp(now()) - as_timestamp(states('sensor.our_days_summary'), 0)) > 900 %}
+        Calendar data is stale; check the connection.
+      {% else %}
+        {% for event in (state_attr('sensor.our_days_summary', 'upcomingEvents') or [])[:8] %}
+          - **{{ event.date }} {{ event.startLocal or 'All day' }}** — {{ event.title }}
+        {% else %}No upcoming events in the next 60 days.{% endfor %}
+      {% endif %}
+  - type: button
+    name: Edit family rota
+    icon: mdi:calendar-edit
+    tap_action:
+      action: url
+      url_path: https://gretresidencerota.vercel.app/month

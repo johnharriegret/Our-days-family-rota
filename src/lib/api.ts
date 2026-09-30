@@ -9,6 +9,7 @@ export async function withApi(fn: () => Promise<NextResponse>): Promise<NextResp
   try {
     return await fn();
   } catch (err) {
+    if (err instanceof RangeError) return apiError(err.message, 422);
     if (err instanceof AuthError) {
       return apiError(err.message, err.status);
     }

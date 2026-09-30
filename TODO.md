@@ -14,7 +14,7 @@
 > applied.
 >
 > Genuinely NOT started: the "What if?" planner, the annual-leave bridging
-> optimiser, the Jarvis REST + MCP API and API keys, PWA/kiosk mode,
+> optimiser, the full Jarvis MCP API, expanded REST tools and kiosk mode,
 > notifications, and ICS export/backups.
 >
 > Also outstanding, from the Session 4 brief: **Phase 2 of that brief, an
@@ -52,6 +52,10 @@ See `docs/ARCHITECTURE.md` for the full design these build on.
 
 ## Phase 4
 
+- DONE (2026-09-30) — admin-managed read-only API keys, HA/Jarvis summary REST
+  endpoint, authenticated ICS feeds, HA sensor/dashboard setup. See
+  `docs/HOME_ASSISTANT.md`. MCP transport and the wider tool catalogue remain.
+
 - `/api/today`, `/api/week`, `/api/calendar`, `/api/family-status`,
   `/api/next-day-off-together`, `/api/shared-days-off`,
   `/api/childcare-conflicts`, `/api/term-dates`, `/api/work-pattern/:member`,
@@ -59,7 +63,7 @@ See `docs/ARCHITECTURE.md` for the full design these build on.
   auth against the `APIKey` table (schema already has it), read-only.
 - `/api/mcp` — MCP streamable-HTTP server wrapping the same service-layer
   functions as the REST routes above, read-only tools only.
-- API-keys panel in Settings.
+- DONE — API-keys panel in Settings.
 - PWA manifest + service worker, kiosk-mode layout for a wall tablet.
 
 ## Phase 5

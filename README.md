@@ -48,3 +48,10 @@ Vercel dashboard → that project → **Settings → Git → Connect Git Reposit
 → pick `johnharriegret/our-days-family-rota`. `npm run vercel-build` runs
 `prisma migrate deploy` before `next build`, so every push applies any new
 migration automatically.
+
+## Home Assistant / Jarvis
+
+Read-only API keys, weekly summaries and authenticated calendar feeds are
+available in admin Settings. See [the setup guide](docs/HOME_ASSISTANT.md) for
+HA Remote Calendar, REST sensors and a dashboard view with shared days off and
+upcoming appointments. No additional service or database migration is needed.

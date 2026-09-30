@@ -1,0 +1,35 @@
+# Merge into configuration.yaml, or include as a Home Assistant package.
+# secrets.yaml: our_days_authorization: "Bearer od_REPLACE_WITH_YOUR_KEY"
+rest:
+  - resource: https://gretresidencerota.vercel.app/api/integrations/summary
+    scan_interval: 300
+    timeout: 30
+    headers:
+      Authorization: !secret our_days_authorization
+    sensor:
+      - name: Our Days Summary
+        unique_id: our_days_summary
+        value_template: "{{ value_json.generatedAt }}"
+        json_attributes:
+          - timezone
+          - today
+          - week
+          - nextFullDayOffTogether
+          - nextAppointment
+          - upcomingEvents
+          - childcareConflicts
+          - coverage
+          - note
+      - name: Our Days Shared Days This Week
+        unique_id: our_days_shared_days_this_week
+        value_template: "{{ value_json.week.fullDaysOffTogether | length }}"
+        unit_of_measurement: days
+      - name: Our Days Next Day Off Together
+        unique_id: our_days_next_day_off_together
+        value_template: "{{ value_json.nextFullDayOffTogether or 'None in next 60 days' }}"
+# Exclude the large detailed payload from recorder history; current attributes
+# remain available to dashboard cards, automations and Jarvis.
+recorder:
+  exclude:
+    entities:
+      - sensor.our_days_summary
