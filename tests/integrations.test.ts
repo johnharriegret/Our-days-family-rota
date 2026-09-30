@@ -27,6 +27,7 @@ test("shared full days require two configured parents and previous-day context",
   assert.equal(fullDayOff(day(today.date, [parent("dad")]), previous), false);
   assert.equal(fullDayOff(today, day(previous.date, [parent("dad", "18:00", "06:00"), parent("mum")])), false);
   assert.equal(fullDayOff(today, day(previous.date, [parent("dad", "06:00", "18:00"), parent("mum")])), true);
+  assert.equal(fullDayOff(today, day(previous.date, [parent("dad", "18:00", "00:00"), parent("mum")])), true);
   const unknown = parent("mum"); unknown.source = "NONE";
   assert.equal(fullDayOff(day(today.date, [parent("dad"), unknown]), previous), false);
   assert.equal(fullDayOff(today, day(previous.date, [parent("dad"), unknown])), false);

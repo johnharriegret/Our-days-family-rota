@@ -19,7 +19,8 @@ export function fullDayOff(day: CalendarDayView, previous?: CalendarDayView): bo
   const parents = day.members.filter(m => m.memberKind === "PARENT");
   return parents.length >= 2 && parents.every(m => m.isOff && m.source !== "NONE" &&
     previous?.members.some(p => p.memberId === m.memberId && p.source !== "NONE" &&
-      (!p.startLocal || !p.endLocal || p.endLocal > p.startLocal)));
+      (p.isOff || (p.startLocal && p.endLocal &&
+        (p.endLocal > p.startLocal || p.endLocal === "00:00")))));
 }
 export function buildSummary(days: CalendarDayView[], today: string, timezone: string, startsOn: number, now = new Date()) {
   const start = weekStart(today, startsOn);
