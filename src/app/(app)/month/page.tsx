@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import { useRouter, useSearchParams } from "next/navigation";
 import { Brush, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, GraduationCap, Heart, Pencil, Sparkles, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/client";
-import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
+import { useBackgroundRefresh, useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
 import { MemberAvatar } from "@/components/memberIcon";
 import { resolveQuickShiftConfig } from "@/lib/quickShift";
@@ -438,6 +438,27 @@ export default function MonthPage() {
     void load(true);
   }, [load]);
   useCalendarChangedListener(refreshCalendar);
+
+  // Someone else in the household may have changed things. Re-fetch the
+  // visible month quietly (no "Loading..." badge) and drop the warmed
+  // neighbours so they refetch fresh on the next arrow press.
+  const backgroundRefresh = useCallback(async () => {
+    const requestId = activeRequest.current;
+    const month = monthStart;
+    try {
+      const nextDays = await fetchMonth(month);
+      // The user switched month (or a normal load started) meanwhile - that
+      // load owns the screen, so don't overwrite it.
+      if (requestId !== activeRequest.current) return;
+      cacheGeneration.current += 1;
+      monthCache.current.clear();
+      monthCache.current.set(month, nextDays);
+      showDays(nextDays);
+    } catch {
+      // Offline or a blip - keep showing what we have; the next tick retries.
+    }
+  }, [fetchMonth, monthStart, showDays]);
+  useBackgroundRefresh(backgroundRefresh);
 
   const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(
     new Date(`${monthStart}T12:00:00Z`),

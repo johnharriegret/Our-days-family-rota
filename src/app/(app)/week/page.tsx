@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CalendarRange, ChevronLeft, ChevronRight, Heart, Sparkles } from "lucide-react";
 import { apiFetch } from "@/lib/client";
-import { useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
+import { useBackgroundRefresh, useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
 import { ChildcareBanner } from "@/components/ChildcareBanner";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
@@ -62,6 +62,7 @@ export default function WeekPage() {
     load();
   }, [load]);
   useCalendarChangedListener(load);
+  useBackgroundRefresh(load);
 
   useEffect(() => {
     apiFetch<{ togetherColor: string }>("/api/settings/appearance").then((d) => setTogetherColor(d.togetherColor));

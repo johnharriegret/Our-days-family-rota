@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Heart, Sun } from "lucide-react";
 import { apiFetch } from "@/lib/client";
-import { useCalendarChangedListener } from "@/lib/refresh";
+import { useBackgroundRefresh, useCalendarChangedListener } from "@/lib/refresh";
 import { MemberAvatar } from "@/components/memberIcon";
 import { ChildcareBanner } from "@/components/ChildcareBanner";
 import type { CalendarDayView } from "@/lib/clientTypes";
@@ -50,6 +50,7 @@ export default function TodayPage() {
     load();
   }, [load]);
   useCalendarChangedListener(load);
+  useBackgroundRefresh(load);
 
   if (loading) return <div className="page-body empty-state">Loading…</div>;
   if (error) return <div className="page-body"><div className="error-banner">{error}</div></div>;
