@@ -21,7 +21,16 @@ export type QuickShiftConfig = {
   dayEndLocal: string;
   nightStartLocal: string;
   nightEndLocal: string;
+  lateColor: string;
+  lateStartLocal: string;
+  lateEndLocal: string;
 };
+
+// Lates (10:00-22:00) always show red for every parent, so they never clash
+// with the orange used for Days.
+export const LATE_COLOR = "#DC2626";
+export const LATE_START_LOCAL = "10:00";
+export const LATE_END_LOCAL = "22:00";
 
 // The two most common colorToken slots (see MEMBER_COLORS) are whoever ran
 // /setup ("dad", always the first member) and whoever was added second
@@ -45,10 +54,13 @@ export function resolveQuickShiftConfig(member: QuickShiftMember): QuickShiftCon
     dayEndLocal: member.dayEndLocal || "18:00",
     nightStartLocal: member.nightStartLocal || "18:00",
     nightEndLocal: member.nightEndLocal || "06:00",
+    lateColor: LATE_COLOR,
+    lateStartLocal: LATE_START_LOCAL,
+    lateEndLocal: LATE_END_LOCAL,
   };
 }
 
-export type ShiftDisplayKind = "DAY" | "NIGHT";
+export type ShiftDisplayKind = "DAY" | "NIGHT" | "LATE";
 
 /**
  * Classifies a resolved shift interval as a day or night shift purely from its
@@ -58,5 +70,7 @@ export type ShiftDisplayKind = "DAY" | "NIGHT";
  * without needing a separate "kind" field on ShiftType.
  */
 export function classifyShiftKind(startLocal: string, endLocal: string): ShiftDisplayKind {
-  return endLocal <= startLocal ? "NIGHT" : "DAY";
+  if (endLocal <= startLocal) return "NIGHT";
+  // A same-day shift that starts at 10:00 or later is a late (e.g. 10-22).
+  return startLocal >= LATE_START_LOCAL ? "LATE" : "DAY";
 }

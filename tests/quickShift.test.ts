@@ -51,3 +51,9 @@ test("a saved override always wins over the computed default", () => {
   assert.equal(cfg.dayStartLocal, "07:00");
   assert.equal(cfg.nightEndLocal, "07:00");
 });
+
+test("10:00-22:00 classifies as a LATE shift, red regardless of parent", () => {
+  assert.equal(classifyShiftKind("10:00", "22:00"), "LATE");
+  assert.equal(resolveQuickShiftConfig({ colorToken: "dad" }).lateColor, "#DC2626");
+  assert.equal(resolveQuickShiftConfig({ colorToken: "mum" }).lateColor, "#DC2626");
+});

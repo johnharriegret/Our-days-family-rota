@@ -601,7 +601,7 @@ a { color: inherit; text-decoration: none; }
 .calendar-legend-group { display: grid; grid-template-columns: 45px minmax(0, 1fr); align-items: center; gap: 7px; }
 .calendar-legend-group > em { color: var(--muted); font-size: 8.5px; font-style: normal; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .calendar-legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.calendar-legend.parent-colors { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.calendar-legend.parent-colors { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .calendar-legend span { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; color: var(--muted); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
 .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--marker-color); }
 .legend-shift { display: inline-block; width: 14px; height: 8px; border-radius: 3px; }

@@ -7,14 +7,15 @@ import { apiFetch } from "@/lib/client";
 import { useBackgroundRefresh, useCalendarChangedListener, emitCalendarChanged } from "@/lib/refresh";
 import { PlanWeekSheet } from "@/components/PlanWeekSheet";
 import { MemberAvatar } from "@/components/memberIcon";
-import { resolveQuickShiftConfig } from "@/lib/quickShift";
+import { LATE_COLOR, resolveQuickShiftConfig } from "@/lib/quickShift";
 import { initials } from "@/lib/initials";
 import type { CalendarDayView, FamilyMember } from "@/lib/clientTypes";
 
-type QuickFillAction = "DAY" | "NIGHT" | "OVERTIME" | "HOLIDAY" | "APPOINTMENT" | "ACTIVITY" | "OTHER";
+type QuickFillAction = "DAY" | "LATE" | "NIGHT" | "OVERTIME" | "HOLIDAY" | "APPOINTMENT" | "ACTIVITY" | "OTHER";
 
 const ACTION_LABELS: Record<QuickFillAction, string> = {
   DAY: "Days",
+  LATE: "Lates",
   NIGHT: "Nights",
   OVERTIME: "Overtime",
   HOLIDAY: "Holiday",
@@ -27,7 +28,7 @@ const ACTION_LABELS: Record<QuickFillAction, string> = {
 // note of what it is) rather than a work shift - available to anyone, parent
 // or child. The shift-specific actions only make sense for a parent.
 const EVENT_ACTIONS = new Set<QuickFillAction>(["APPOINTMENT", "ACTIVITY", "OTHER"]);
-const PARENT_ACTIONS: QuickFillAction[] = ["DAY", "NIGHT", "OVERTIME", "HOLIDAY", "APPOINTMENT", "ACTIVITY", "OTHER"];
+const PARENT_ACTIONS: QuickFillAction[] = ["DAY", "LATE", "NIGHT", "OVERTIME", "HOLIDAY", "APPOINTMENT", "ACTIVITY", "OTHER"];
 const CHILD_ACTIONS: QuickFillAction[] = ["APPOINTMENT", "ACTIVITY", "OTHER"];
 
 function toMinutesOfDay(hhmm: string): number {
@@ -259,6 +260,7 @@ export default function MonthPage() {
     if (!member) return "var(--accent)";
     const cfg = resolveQuickShiftConfig(member);
     if (mark.action === "NIGHT") return cfg.nightColor;
+    if (mark.action === "LATE") return cfg.lateColor;
     if (mark.action === "OVERTIME") return "var(--warn)";
     return cfg.dayColor;
   }
@@ -288,6 +290,8 @@ export default function MonthPage() {
         let payload: Record<string, unknown> = { ownerId: mark.ownerId, date, shiftTypeId: null };
         if (mark.action === "DAY") {
           payload = { ...payload, customStart: cfg.dayStartLocal, customEnd: cfg.dayEndLocal, paidMinutes: shiftDurationMinutes(cfg.dayStartLocal, cfg.dayEndLocal) };
+        } else if (mark.action === "LATE") {
+          payload = { ...payload, customStart: cfg.lateStartLocal, customEnd: cfg.lateEndLocal, paidMinutes: shiftDurationMinutes(cfg.lateStartLocal, cfg.lateEndLocal) };
         } else if (mark.action === "NIGHT") {
           payload = { ...payload, customStart: cfg.nightStartLocal, customEnd: cfg.nightEndLocal, paidMinutes: shiftDurationMinutes(cfg.nightStartLocal, cfg.nightEndLocal) };
         } else if (mark.action === "OVERTIME") {
@@ -561,6 +565,7 @@ export default function MonthPage() {
             {selectedMember && <div><span className="control-label">What?</span><div className="choice-row">{availableActions.map((action) => {
               const cfg = selectedMember.kind === "PARENT" ? resolveQuickShiftConfig(selectedMember) : null;
               const swatch = action === "DAY" ? cfg!.dayColor
+                : action === "LATE" ? cfg!.lateColor
                 : action === "NIGHT" ? cfg!.nightColor
                 : action === "HOLIDAY" ? "var(--family)"
                 : action === "OVERTIME" ? "var(--warn)"
@@ -609,7 +614,9 @@ export default function MonthPage() {
                     <span key={`${parent.id}-day`}><i className="legend-shift" style={{ background: config.dayColor }} />{initials(parent.name)} Day</span>,
                     <span key={`${parent.id}-night`}><i className="legend-shift" style={{ background: config.nightColor }} />{initials(parent.name)} Night</span>,
                   ];
-                })}
+                }).concat(
+                  <span key="late"><i className="legend-dot" style={{ background: LATE_COLOR }} />Late</span>,
+                )}
               </div>
             </div>
             <div className="calendar-legend-group">

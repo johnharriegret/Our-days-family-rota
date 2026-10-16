@@ -74,7 +74,8 @@ function weekLabel(date: string): string {
 function dadLabel(day: PlanDay): string | null {
   if (!day.dadKnown) return null;
   if (!day.dadShift) return "Off";
-  return classifyShiftKind(day.dadShift.startLocal, day.dadShift.endLocal) === "NIGHT" ? "Night" : "Day";
+  const kind = classifyShiftKind(day.dadShift.startLocal, day.dadShift.endLocal);
+  return kind === "NIGHT" ? "Night" : kind === "LATE" ? "Late" : "Day";
 }
 
 function Metrics({ m }: { m: PlanMetrics }) {

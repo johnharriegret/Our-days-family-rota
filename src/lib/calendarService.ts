@@ -382,9 +382,9 @@ export async function getCalendarRange(
       const quickShift = resolveQuickShiftConfig(member);
       const displayColor =
         pd.working && pd.startLocal && pd.endLocal
-          ? classifyShiftKind(pd.startLocal, pd.endLocal) === "NIGHT"
-            ? quickShift.nightColor
-            : quickShift.dayColor
+          ? ({ NIGHT: quickShift.nightColor, LATE: quickShift.lateColor, DAY: quickShift.dayColor })[
+              classifyShiftKind(pd.startLocal, pd.endLocal)
+            ]
           : null;
       return {
         memberId: member.id,
